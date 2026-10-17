@@ -121,6 +121,38 @@ def ask(
     )
 
 
+@app.command(name="eval")
+def run_eval(
+    mode: str = typer.Option("both", help="agent, simple, or both"),
+    only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
+    workers: int = typer.Option(4, help="Questions answered in parallel"),
+) -> None:
+    """Run the golden question set, score it, and write evals/results/."""
+    from edgar_rag import evaluation
+
+    items = evaluation.load_golden()
+    if only:
+        wanted = set(only.split(","))
+        items = [i for i in items if i.id in wanted]
+    modes = ["agent", "simple"] if mode == "both" else [mode]
+
+    summaries = {}
+    for m in modes:
+        typer.echo(f"Running {len(items)} questions in {m} mode...")
+        records = evaluation.run(m, items, workers=workers)
+        path = evaluation.save(records, m)
+        summaries[m] = evaluation.summarize(records)
+        failed = [r.id for r in records if not r.passed]
+        typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · saved {path}")
+        if failed:
+            typer.echo(f"  failed: {', '.join(failed)}")
+
+    table = evaluation.summary_markdown(summaries, config.llm_model())
+    if not only:  # partial runs don't overwrite the committed summary
+        (evaluation.EVALS_DIR / "results" / "summary.md").write_text(table)
+    typer.echo("\n" + table)
+
+
 def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> None:
     from edgar_rag.answer import answer as run_answer
 

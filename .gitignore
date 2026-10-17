@@ -26,3 +26,6 @@ chroma/
 .vscode/*
 !.vscode/settings.json
 .idea/
+
+# Eval run logs (results JSONL and summary.md are committed)
+evals/results/*.log

@@ -36,6 +36,7 @@ class AgentAnswer(BaseModel):
     steps: int
     prompt_tokens: int
     completion_tokens: int
+    truncated: bool = False  # final answer hit max_tokens
 
 
 def available_companies() -> str:
@@ -77,6 +78,7 @@ def ask(question: str) -> AgentAnswer:
     ]
     prompt_tokens = completion_tokens = 0
     text = ""
+    truncated = False
 
     for step in range(1, MAX_STEPS + 1):
         # On the last step, offer no tools so the model must answer with what it has.
@@ -88,6 +90,7 @@ def ask(question: str) -> AgentAnswer:
 
         if not message.tool_calls:
             text = (message.content or "").strip()
+            truncated = response.choices[0].finish_reason == "length"
             break
 
         # Echo the assistant's tool request back into the history, then add each result.
@@ -119,4 +122,5 @@ def ask(question: str) -> AgentAnswer:
         steps=step,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        truncated=truncated,
     )
