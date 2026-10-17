@@ -82,5 +82,34 @@ def search(
         typer.echo(f"    {preview}...")
 
 
+@app.command()
+def ask(
+    question: str,
+    k: int = typer.Option(5, help="Number of chunks to retrieve"),
+    ticker: str | None = typer.Option(None, help="Only this company, e.g. AAPL"),
+    item: str | None = typer.Option(None, help="Only this section, e.g. 1A"),
+) -> None:
+    """Answer QUESTION from the filings, with citations."""
+    from edgar_rag.answer import answer as run_answer
+
+    result = run_answer(question, k=k, ticker=ticker, item=item)
+    typer.echo(f"\n{result.text}\n")
+    typer.echo("Sources:")
+    for n, source in enumerate(result.sources, 1):
+        c = source.chunk
+        mark = "*" if n in result.cited else " "
+        typer.echo(
+            f" {mark}[{n}] {c.ticker} {c.form} {c.report_date} · Item {c.item}. "
+            f"{c.section_title[:50]} · score {source.score:.3f} · {c.chunk_id}"
+        )
+    typer.echo("  (* = cited in the answer)")
+    if result.invalid_citations:
+        typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
+    typer.echo(
+        f"\n{result.llm.model} · {result.llm.prompt_tokens} prompt + "
+        f"{result.llm.completion_tokens} completion tokens"
+    )
+
+
 if __name__ == "__main__":
     app()
