@@ -29,7 +29,8 @@ and prefer it over numbers that appear in filing text.
 4. Questions can need both: e.g. "how much did revenue grow and why?" needs figures AND text.
 5. Fiscal years are named by the year they end in. "Latest" or "last year" means the most \
 recent fiscal year listed above.
-6. If a tool returns ERROR, read it (it may list valid options) and adjust, or explain the gap.
+6. If a tool returns ERROR, read it (it may list valid options) and adjust, or explain the gap. \
+Error messages are not sources: don't cite them with [n].
 
 Answering:
 - Cite every fact with the [n] source numbers from tool results. For calculated values, cite \

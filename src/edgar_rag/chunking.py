@@ -22,6 +22,9 @@ HEADING_RE = re.compile(r"^Item\s+(\d{1,2}[A-C]?)\.\s+([^|\s].*)$", re.IGNORECAS
 # Page footers like "Apple Inc. | 2025 Form 10-K | 20".
 FOOTER_RE = re.compile(r"^.+\|\s*\d{4} Form 10-K\s*\|\s*\d+$")
 
+# Elements that start a new line when rendered.
+BLOCK_TAGS = ["p", "div", "li", "tr", "table", "h1", "h2", "h3", "h4", "h5", "h6", "section"]
+
 # Split long paragraphs at sentence ends.
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -63,14 +66,23 @@ def html_to_lines(html: str) -> list[str]:
     for tag in soup(["ix:header", "script", "style"]):
         tag.decompose()
 
+    # Break lines only at block elements, like a browser does. Inline elements (<span>, <font>)
+    # are joined directly: some filings split one word across styled spans, e.g. Microsoft's
+    # small-caps headings are "RIS" + "K FACTORS", and a separator between every text node
+    # would cut words in half.
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    for block in soup.find_all(BLOCK_TAGS):
+        block.append("\n")
+
     # Flatten each table row to "cell | cell | cell" so rows stay intact.
     for row in soup.find_all("tr"):
-        cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+        cells = [re.sub(r"\s+", " ", c.get_text()).strip() for c in row.find_all(["td", "th"])]
         cells = [c for c in cells if c and c not in {"$", "%", ")"}]
         row.replace_with(soup.new_string("\n" + " | ".join(cells) + "\n"))
 
     lines = []
-    for raw in soup.get_text("\n").splitlines():
+    for raw in soup.get_text().splitlines():
         line = re.sub(r"\s+", " ", raw.replace("\xa0", " ")).strip()
         if line and not FOOTER_RE.match(line):
             lines.append(line)

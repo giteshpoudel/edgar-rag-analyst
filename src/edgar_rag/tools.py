@@ -23,6 +23,7 @@ class Source(BaseModel):
     label: str
     ref: str  # chunk id, or accession number + XBRL tag
     url: str
+    score: float | None = None  # search similarity, for filing passages
 
 
 class Sources:
@@ -31,12 +32,12 @@ class Sources:
     def __init__(self) -> None:
         self.items: list[Source] = []
 
-    def add(self, kind: str, label: str, ref: str, url: str) -> int:
+    def add(self, kind: str, label: str, ref: str, url: str, score: float | None = None) -> int:
         for s in self.items:  # same source returned twice keeps its number
             if s.ref == ref:
                 return s.n
         n = len(self.items) + 1
-        self.items.append(Source(n=n, kind=kind, label=label, ref=ref, url=url))
+        self.items.append(Source(n=n, kind=kind, label=label, ref=ref, url=url, score=score))
         return n
 
 
@@ -78,7 +79,7 @@ def search_filings(args: SearchFilingsArgs, sources: Sources) -> str:
     for r in results:
         c = r.chunk
         label = f"{c.company} {c.form} ({c.report_date}), Item {c.item}. {c.section_title}"
-        n = sources.add("filing", label, c.chunk_id, c.source_url)
+        n = sources.add("filing", label, c.chunk_id, c.source_url, score=r.score)
         blocks.append(f"[{n}] {label}\n{c.text}")
     return "\n\n".join(blocks)
 

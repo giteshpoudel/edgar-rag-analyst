@@ -14,11 +14,12 @@ from edgar_rag.scoring import Expected, judge, number_found, retrieval_scores
 Mode = Literal["agent", "simple"]
 EVALS_DIR = Path("evals")
 PASS_COVERAGE = 2 / 3  # narrative answers must cover at least this share of key points
+CATEGORIES = ("numeric", "narrative", "mixed", "comparison", "trend", "unanswerable")
 
 
 class GoldenItem(BaseModel):
     id: str
-    category: Literal["numeric", "narrative", "mixed", "unanswerable"]
+    category: Literal["numeric", "narrative", "mixed", "comparison", "trend", "unanswerable"]
     question: str
     expected_numbers: list[Expected] = []
     expected_items: list[str] = []
@@ -34,6 +35,7 @@ class Record(BaseModel):
     answer: str
     tools_used: list[str]
     retrieved_items: list[str]  # 10-K sections of retrieved chunks, in rank order
+    top_score: float | None = None  # best search similarity seen (None if no search ran)
     invalid_citations: list[int]
     prompt_tokens: int
     completion_tokens: int
@@ -67,6 +69,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
             "answer": r.text,
             "tools_used": ["search"],
             "retrieved_items": [s.chunk.item for s in r.sources],
+            "top_score": max((s.score for s in r.sources), default=None),
             "invalid_citations": r.invalid_citations,
             "prompt_tokens": r.llm.prompt_tokens,
             "completion_tokens": r.llm.completion_tokens,
@@ -79,6 +82,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
         "answer": r.text,
         "tools_used": [c.name for c in r.tool_calls],
         "retrieved_items": [_item_from_chunk_id(s.ref) for s in r.sources if s.kind == "filing"],
+        "top_score": max((s.score for s in r.sources if s.score is not None), default=None),
         "invalid_citations": r.invalid_citations,
         "prompt_tokens": r.prompt_tokens,
         "completion_tokens": r.completion_tokens,
@@ -93,7 +97,7 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
         error = ""
     except Exception as e:  # noqa: BLE001 - one failure shouldn't stop the run; it's scored as a fail
         out = {"answer": "", "tools_used": [], "retrieved_items": [], "invalid_citations": [],
-               "prompt_tokens": 0, "completion_tokens": 0, "truncated": False}
+               "prompt_tokens": 0, "completion_tokens": 0, "truncated": False, "top_score": None}
         error = f"{type(e).__name__}: {e}"
     seconds = time.monotonic() - start
 
@@ -143,7 +147,7 @@ def summarize(records: list[Record]) -> dict:
         "pass_rate": _mean([r.passed for r in records]),
         **{
             f"pass_{cat}": _mean([r.passed for r in records if r.category == cat])
-            for cat in ("numeric", "narrative", "mixed", "unanswerable")
+            for cat in CATEGORIES
         },
         "number_accuracy": _mean(numbers),
         "retrieval_hit_rate": _mean([r.retrieval_hit for r in with_retrieval]),
@@ -167,6 +171,8 @@ ROWS = [
     ("Numeric questions", "pass_numeric", "pct"),
     ("Narrative questions", "pass_narrative", "pct"),
     ("Mixed questions", "pass_mixed", "pct"),
+    ("Comparison questions (across companies)", "pass_comparison", "pct"),
+    ("Trend questions (across years)", "pass_trend", "pct"),
     ("Unanswerable (refused correctly)", "pass_unanswerable", "pct"),
     ("Number accuracy", "number_accuracy", "pct"),
     ("Retrieval hit rate (right section retrieved)", "retrieval_hit_rate", "pct"),
