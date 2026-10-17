@@ -23,11 +23,19 @@ def _client() -> OpenAI:
 
 # deepseek-flash reasons before answering, and those hidden tokens count against max_tokens.
 # Limits that are too low end the call with finish_reason "length" and an empty answer.
-def complete(messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4000):
+def complete(
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    max_tokens: int = 4000,
+    model: str | None = None,
+    tool_choice: str | None = None,
+):
     """One raw API call, optionally offering tools. Returns the SDK response object."""
-    kwargs = {"tools": tools} if tools else {}
+    kwargs: dict = {"tools": tools} if tools else {}
+    if tools and tool_choice:
+        kwargs["tool_choice"] = tool_choice
     return _client().chat.completions.create(
-        model=config.llm_model(),
+        model=model or config.llm_model(),
         messages=messages,
         temperature=0,
         max_tokens=max_tokens,

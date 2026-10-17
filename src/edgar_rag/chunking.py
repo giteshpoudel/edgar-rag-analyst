@@ -14,10 +14,31 @@ from edgar_rag.sec_client import Filing
 # 10-Ks are XHTML; parsing them as HTML is fine and more forgiving.
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-# A body heading has the number and title on one line: "Item 1A. Risk Factors".
-# The table of contents is a table, so its rows look like "Item 1A. | Risk Factors | 5";
-# requiring the title not to start with "|" skips them.
-HEADING_RE = re.compile(r"^Item\s+(\d{1,2}[A-C]?)\.\s+([^|\s].*)$", re.IGNORECASE)
+# A body heading has the number and title on one line. Filers punctuate it differently:
+# "Item 1A. Risk Factors", "Item 1A: Risk Factors" (Applied Materials), "ITEM 1.BUSINESS"
+# (KLA, Broadcom). The table of contents is a table, so its rows look like
+# "Item 1A. | Risk Factors | 5"; requiring the title not to start with "|" skips them.
+HEADING_RE = re.compile(r"^Item\s+(\d{1,2}[A-C]?)\s*[.:]\s*([^|\s].*)$", re.IGNORECASE)
+
+# Fallback for filers that don't number their sections (Intel uses its own layout plus a
+# cross-reference index): standard titles, matched against the whole line.
+TITLE_ITEMS = {
+    "business": "1",
+    "risk factors": "1A",
+    "unresolved staff comments": "1B",
+    "cybersecurity": "1C",
+    "properties": "2",
+    "legal proceedings": "3",
+    "management's discussion and analysis": "7",
+    "management's discussion and analysis of financial condition and results of operations": "7",
+    "quantitative and qualitative disclosures about market risk": "7A",
+    "financial statements and supplementary data": "8",
+    "financial statements and supplemental details": "8",
+    "controls and procedures": "9A",
+    "exhibits": "15",
+    "exhibits and financial statement schedules": "15",
+}
+MIN_NUMBERED_SECTIONS = 5  # fewer numbered headings than this -> try the title fallback
 
 # Page footers like "Apple Inc. | 2025 Form 10-K | 20".
 FOOTER_RE = re.compile(r"^.+\|\s*\d{4} Form 10-K\s*\|\s*\d+$")
@@ -91,25 +112,57 @@ def html_to_lines(html: str) -> list[str]:
 
 def split_sections(lines: list[str]) -> list[Section]:
     """Group lines under their "Item N." heading. Text before the first heading is dropped."""
+    sections = _split(lines, _numbered_heading)
+    if len({s.item for s in sections}) < MIN_NUMBERED_SECTIONS:
+        by_title = _split(lines, _titled_heading)
+        if len({s.item for s in by_title}) > len({s.item for s in sections}):
+            sections = by_title
+    return _merge_same_item(sections)
+
+
+def _numbered_heading(line: str) -> tuple[str, str] | None:
+    match = HEADING_RE.match(line)
+    if match and len(line) < 200:
+        return match.group(1).upper(), match.group(2)
+    return None
+
+
+def _titled_heading(line: str) -> tuple[str, str] | None:
+    key = line.strip().rstrip(".").replace("’", "'").lower()
+    item = TITLE_ITEMS.get(key)
+    return (item, line.strip()) if item else None
+
+
+def _split(lines: list[str], heading) -> list[Section]:
     sections: list[Section] = []
     current: Section | None = None
     body: list[str] = []
-
     for line in lines:
-        match = HEADING_RE.match(line)
-        if match and len(line) < 200:
+        found = heading(line)
+        if found:
             if current:
                 current.text = "\n".join(body)
                 sections.append(current)
-            current = Section(item=match.group(1).upper(), title=match.group(2), text="")
+            current = Section(item=found[0], title=found[1], text="")
             body = []
         elif current:
             body.append(line)
-
     if current:
         current.text = "\n".join(body)
         sections.append(current)
     return sections
+
+
+def _merge_same_item(sections: list[Section]) -> list[Section]:
+    """A title can appear more than once (contents list, then body); keep one section per item
+    so chunk ids (accession:item:index) stay unique. The first title is kept."""
+    merged: dict[str, Section] = {}
+    for s in sections:
+        if s.item in merged:
+            merged[s.item].text = "\n".join(t for t in (merged[s.item].text, s.text) if t)
+        else:
+            merged[s.item] = s.model_copy()
+    return list(merged.values())
 
 
 def chunk_text(text: str, max_chars: int = 1500, overlap_chars: int = 200) -> list[str]:

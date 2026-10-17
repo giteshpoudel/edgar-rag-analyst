@@ -14,12 +14,12 @@ from edgar_rag.scoring import Expected, judge, number_found, retrieval_scores
 Mode = Literal["agent", "simple"]
 EVALS_DIR = Path("evals")
 PASS_COVERAGE = 2 / 3  # narrative answers must cover at least this share of key points
-CATEGORIES = ("numeric", "narrative", "mixed", "comparison", "trend", "unanswerable")
+CATEGORIES = ("numeric", "narrative", "mixed", "comparison", "trend", "sector", "unanswerable")
 
 
 class GoldenItem(BaseModel):
     id: str
-    category: Literal["numeric", "narrative", "mixed", "comparison", "trend", "unanswerable"]
+    category: Literal["numeric", "narrative", "mixed", "comparison", "trend", "sector", "unanswerable"]
     question: str
     expected_numbers: list[Expected] = []
     expected_items: list[str] = []
@@ -47,6 +47,7 @@ class Record(BaseModel):
     refused: bool
     passed: bool
     truncated: bool = False  # the system's answer was cut off at max_tokens
+    malformed: bool = False  # the model wrote tool-call markup instead of an answer
     judge_error: str = ""  # the judge gave no usable verdict (excluded from judge metrics)
     error: str = ""
 
@@ -87,6 +88,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
         "prompt_tokens": r.prompt_tokens,
         "completion_tokens": r.completion_tokens,
         "truncated": r.truncated,
+        "malformed": r.malformed,
     }
 
 
@@ -161,6 +163,7 @@ def summarize(records: list[Record]) -> dict:
         "avg_seconds": _mean([r.seconds for r in records]),
         "errors": sum(bool(r.error) for r in records),
         "truncated_answers": sum(r.truncated for r in records),
+        "malformed_answers": sum(r.malformed for r in records),
         "judge_errors": sum(bool(r.judge_error) for r in records),
     }
     return out
@@ -173,6 +176,7 @@ ROWS = [
     ("Mixed questions", "pass_mixed", "pct"),
     ("Comparison questions (across companies)", "pass_comparison", "pct"),
     ("Trend questions (across years)", "pass_trend", "pct"),
+    ("Sector questions (13 semiconductor companies)", "pass_sector", "pct"),
     ("Unanswerable (refused correctly)", "pass_unanswerable", "pct"),
     ("Number accuracy", "number_accuracy", "pct"),
     ("Retrieval hit rate (right section retrieved)", "retrieval_hit_rate", "pct"),
@@ -184,6 +188,7 @@ ROWS = [
     ("Avg completion tokens", "avg_completion_tokens", "int"),
     ("Avg seconds per question", "avg_seconds", "sec"),
     ("Truncated answers (hit token limit)", "truncated_answers", "int"),
+    ("Malformed answers (tool-call markup)", "malformed_answers", "int"),
     ("Judge errors (no usable verdict)", "judge_errors", "int"),
     ("Run errors", "errors", "int"),
 ]
@@ -195,12 +200,12 @@ def _fmt(value: float | None, style: str) -> str:
     return {"pct": f"{value:.0%}", "num": f"{value:.2f}", "int": f"{value:,.0f}", "sec": f"{value:.1f}"}[style]
 
 
-def summary_markdown(summaries: dict[str, dict], model: str) -> str:
+def summary_markdown(summaries: dict[str, dict], model: str, judge: str) -> str:
     modes = list(summaries)
     lines = [
         f"# Eval results ({datetime.now():%Y-%m-%d})",
         "",
-        f"{next(iter(summaries.values()))['questions']} questions · model `{model}` · judge `{model}`",
+        f"{next(iter(summaries.values()))['questions']} questions · model `{model}` · judge `{judge}`",
         "",
         "| Metric | " + " | ".join(modes) + " |",
         "|---|" + "---|" * len(modes),

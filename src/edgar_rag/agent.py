@@ -5,17 +5,27 @@
 """
 
 import json
+import re
 
 from pydantic import BaseModel, ValidationError
 
-from edgar_rag import config
+from edgar_rag import companies
 from edgar_rag.answer import parse_citations
-from edgar_rag.chunking import Chunk
 from edgar_rag.llm import complete
 from edgar_rag.prompts import AGENT_SYSTEM
 from edgar_rag.tools import TOOLS, Source, Sources
 
 MAX_STEPS = 6  # LLM calls per question; stops runaway loops
+# Up to this many companies, list them all in the prompt (~15 tokens each). Beyond it the list
+# would cost thousands of tokens on every call, so the agent looks companies up instead.
+LIST_COMPANIES_UP_TO = 50
+
+FINAL_STEP_NUDGE = (
+    "You have reached the tool-call limit. Answer the question now using only the tool results "
+    "above, with citations. Say what you could not find."
+)
+# Tool-call syntax the model sometimes writes into its text instead of a structured call.
+TOOL_MARKUP_RE = re.compile(r"DSML|<｜|invoke name=|</?tool_call", re.IGNORECASE)
 
 
 class ToolCall(BaseModel):
@@ -37,17 +47,20 @@ class AgentAnswer(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     truncated: bool = False  # final answer hit max_tokens
+    malformed: bool = False  # the model wrote tool-call markup instead of an answer
 
 
 def available_companies() -> str:
-    """Describe what's indexed, e.g. 'AAPL (Apple Inc., latest 10-K fiscal year 2025)'."""
-    entries = []
-    for path in sorted((config.data_dir() / "processed").glob("*/*.chunks.jsonl")):
-        first = Chunk.model_validate_json(path.open().readline())
-        entries.append(
-            f"{first.ticker} ({first.company}, latest {first.form} fiscal year {first.report_date[:4]})"
+    """Describe what's indexed, e.g. 'AAPL (Apple Inc., FY2025)', or just a count when large."""
+    indexed = companies.indexed_companies()
+    if not indexed:
+        return "none indexed"
+    if len(indexed) > LIST_COMPANIES_UP_TO:
+        return (
+            f"{len(indexed)} companies are indexed. Use find_company to get a ticker and its "
+            "latest fiscal year."
         )
-    return "; ".join(entries) or "none indexed"
+    return "; ".join(f"{c.ticker} ({c.name}, FY{c.fiscal_year})" for c in indexed)
 
 
 def run_tool(name: str, raw_args: str, sources: Sources) -> tuple[dict, str, bool]:
@@ -81,14 +94,18 @@ def ask(question: str) -> AgentAnswer:
     truncated = False
 
     for step in range(1, MAX_STEPS + 1):
-        # On the last step, offer no tools so the model must answer with what it has.
-        response = complete(messages, tools=schemas if step < MAX_STEPS else None)
+        last = step == MAX_STEPS
+        if last:
+            # Force an answer. Removing the tools entirely made the model write tool calls out
+            # as text (seen in evals), so keep them listed but disallow calling them.
+            messages.append({"role": "user", "content": FINAL_STEP_NUDGE})
+        response = complete(messages, tools=schemas, tool_choice="none" if last else None)
         if response.usage:
             prompt_tokens += response.usage.prompt_tokens
             completion_tokens += response.usage.completion_tokens
         message = response.choices[0].message
 
-        if not message.tool_calls:
+        if not message.tool_calls or last:
             text = (message.content or "").strip()
             truncated = response.choices[0].finish_reason == "length"
             break
@@ -111,6 +128,14 @@ def ask(question: str) -> AgentAnswer:
             )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
+    # Never show the user raw tool-call markup; report it instead.
+    malformed = bool(TOOL_MARKUP_RE.search(text))
+    if malformed:
+        text = (
+            "I couldn't complete this answer: the model returned an incomplete tool request "
+            "instead of an answer. Try rephrasing or narrowing the question."
+        )
+
     cited, invalid = parse_citations(text, len(sources.items))
     return AgentAnswer(
         question=question,
@@ -123,4 +148,5 @@ def ask(question: str) -> AgentAnswer:
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         truncated=truncated,
+        malformed=malformed,
     )

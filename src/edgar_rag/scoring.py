@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from edgar_rag import config
 from edgar_rag.llm import complete
 
 # --- Numbers -------------------------------------------------------------------------------
@@ -52,8 +53,11 @@ def number_found(expected: Expected, text: str) -> bool:
     if expected.kind == "usd_per_share":
         return any(abs(p - expected.value) <= PER_SHARE_ABS_TOL for p in plain)
     # Dollar amounts may be written without a scale word inside tables ("416,161" in millions).
+    # Compare magnitudes: a loss of -267M is usually written "a net loss of $267 million", and
+    # dividing by a negative expected value would make every comparison pass.
+    target = abs(expected.value)
     return any(
-        abs(p * scale - expected.value) / expected.value <= USD_REL_TOL
+        abs(abs(p) * scale - target) / target <= USD_REL_TOL
         for p in plain
         for scale in (1, 1e6, 1e9)
     )
@@ -102,9 +106,11 @@ def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
     points = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(key_points)) or "(none)"
     user = f"Question: {question}\n\nKey points:\n{points}\n\nAnswer to grade:\n{answer}"
     # The judge model reasons first; its reasoning tokens need room (300 was not enough).
+    # A different, stronger model than the one being graded judges more consistently (D-41).
     response = complete(
         [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
         max_tokens=4000,
+        model=config.judge_model(),
     )
     choice = response.choices[0]
     raw = (choice.message.content or "").strip()

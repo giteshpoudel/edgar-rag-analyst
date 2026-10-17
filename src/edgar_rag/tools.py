@@ -5,14 +5,16 @@ the arguments the LLM sends back, and it documents the tool in one place.
 """
 
 from collections.abc import Callable
+from functools import cache
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from edgar_rag import companies
 from edgar_rag.retriever import search
-from edgar_rag.xbrl import METRICS, CompanyFacts, FactNotFound
+from edgar_rag.xbrl import METRICS, PUBLIC_METRICS, CompanyFacts, Fact, FactNotFound
 
-MetricName = Literal[tuple(METRICS)]  # type: ignore[valid-type]
+MetricName = Literal[tuple(PUBLIC_METRICS)]  # type: ignore[valid-type]
 
 
 class Source(BaseModel):
@@ -60,6 +62,25 @@ class GetMetricArgs(BaseModel):
     fiscal_year: int = Field(description="Fiscal year, named by the year it ends in, e.g. 2025.")
 
 
+class FindCompanyArgs(BaseModel):
+    query: str = Field(description="Company name or ticker, e.g. 'Lam Research' or 'LRCX'.")
+
+
+class CompareMetricArgs(BaseModel):
+    metric: MetricName = Field(description="Metric to compare.")
+    divide_by: MetricName | None = Field(
+        None,
+        description="Optional denominator: the result is metric / divide_by as a percentage, "
+        "e.g. gross_profit divided by revenue = gross margin.",
+    )
+    tickers: list[str] | None = Field(
+        None, description="Companies to include. Omit to include every indexed company."
+    )
+    fiscal_year: int | None = Field(
+        None, description="Fiscal year. Omit to use each company's latest indexed year."
+    )
+
+
 class CalculateArgs(BaseModel):
     operation: Literal["percent_change", "difference", "ratio", "sum"] = Field(
         description="percent_change = (b - a) / a * 100; difference = b - a; ratio = a / b; sum = a + b."
@@ -84,20 +105,82 @@ def search_filings(args: SearchFilingsArgs, sources: Sources) -> str:
     return "\n\n".join(blocks)
 
 
+@cache
+def _facts(ticker: str) -> CompanyFacts:
+    """Parsing a company's facts JSON takes a moment; reuse it across tool calls."""
+    return CompanyFacts(ticker)
+
+
+def _cite_fact(fact: Fact, sources: Sources) -> int:
+    label = f"SEC XBRL {fact.tag}, {fact.ticker} FY{fact.fiscal_year} ({fact.form} filed {fact.filed})"
+    url = f"https://www.sec.gov/Archives/edgar/data/{fact.cik}/{fact.accession_number.replace('-', '')}/"
+    return sources.add("xbrl", label, f"{fact.accession_number}:{fact.tag}:{fact.period_end}", url)
+
+
+def find_company(args: FindCompanyArgs, sources: Sources) -> str:
+    matches = companies.find(args.query)
+    if not matches:
+        return f"ERROR: no indexed company matches '{args.query}'. {len(companies.indexed_companies())} companies are indexed."
+    return "\n".join(
+        f"{c.ticker}: {c.name}, latest {c.form} fiscal year {c.fiscal_year} (ends {c.report_date})"
+        for c in matches
+    )
+
+
+def compare_metric(args: CompareMetricArgs, sources: Sources) -> str:
+    tickers = [t.upper() for t in args.tickers] if args.tickers else [c.ticker for c in companies.indexed_companies()]
+    latest = {c.ticker: c.fiscal_year for c in companies.indexed_companies()}
+    rows, missing = [], []
+    for t in tickers:
+        year = args.fiscal_year or latest.get(t)
+        if year is None:
+            missing.append(f"{t} (not indexed)")
+            continue
+        try:
+            fact = _facts(t).get(args.metric, year)
+            refs = [_cite_fact(fact, sources)]
+            derived = [fact.metric] if fact.tag.startswith("derived") else []
+            value = fact.value
+            if args.divide_by:
+                denom = _facts(t).get(args.divide_by, year)
+                refs.append(_cite_fact(denom, sources))
+                if denom.tag.startswith("derived"):
+                    derived.append(denom.metric)
+                if denom.value == 0:
+                    missing.append(f"{t} ({args.divide_by} is zero)")
+                    continue
+                value = fact.value / denom.value * 100
+            rows.append((value, t, year, fact.period_end, refs, derived))
+        except (FactNotFound, ValueError) as e:
+            missing.append(f"{t} ({e})")
+
+    rows.sort(key=lambda r: r[0], reverse=True)
+    what = f"{args.metric} / {args.divide_by} (%)" if args.divide_by else f"{args.metric} ({METRICS[args.metric][1]})"
+    lines = [f"{what}, highest first:"]
+    for rank, (value, t, year, end, refs, derived) in enumerate(rows, 1):
+        shown = f"{value:.2f}%" if args.divide_by else f"{value:,.2f}"
+        cites = "".join(f"[{n}]" for n in refs)
+        note = f" (derived {', '.join(derived)}: company reports no such line)" if derived else ""
+        lines.append(f"{rank}. {t} FY{year} (year ended {end}): {shown} {cites}{note}")
+    if missing:
+        lines.append("Not available: " + "; ".join(missing))
+    return "\n".join(lines)
+
+
 def get_financial_metric(args: GetMetricArgs, sources: Sources) -> str:
     try:
-        fact = CompanyFacts(args.ticker).get(args.metric, args.fiscal_year)
+        fact = _facts(args.ticker.upper()).get(args.metric, args.fiscal_year)
     except FactNotFound as e:
         return f"ERROR: {e}"
     except ValueError as e:  # unknown ticker
         return f"ERROR: {e}"
-    label = f"SEC XBRL {fact.tag}, {fact.ticker} FY{fact.fiscal_year} ({fact.form} filed {fact.filed})"
-    url = f"https://www.sec.gov/Archives/edgar/data/{fact.cik}/{fact.accession_number.replace('-', '')}/"
-    n = sources.add("xbrl", label, f"{fact.accession_number}:{fact.tag}:{fact.period_end}", url)
+    n = _cite_fact(fact, sources)
     period = f"{fact.period_start} to {fact.period_end}" if fact.period_start else f"as of {fact.period_end}"
+    # The LLM only sees this text, so a derived value must be labelled here, not just in the source.
+    derived = f" [{fact.label}]" if fact.tag.startswith("derived") else ""
     return (
         f"[{n}] {fact.company} {fact.metric} FY{fact.fiscal_year} ({period}): "
-        f"{fact.value:,.2f} {fact.unit}"
+        f"{fact.value:,.2f} {fact.unit}{derived}"
     )
 
 
@@ -149,6 +232,22 @@ TOOLS: dict[str, Tool] = {
             "fiscal year. Use for ANY financial number. Returns a numbered source.",
             args_model=GetMetricArgs,
             fn=get_financial_metric,
+        ),
+        Tool(
+            name="compare_metric",
+            description="Compare one metric across many companies in one call, ranked highest "
+            "first, each with a numbered source. With divide_by it computes a percentage "
+            "(e.g. gross_profit / revenue = gross margin). Use for rankings and peer comparisons "
+            "instead of many get_financial_metric calls.",
+            args_model=CompareMetricArgs,
+            fn=compare_metric,
+        ),
+        Tool(
+            name="find_company",
+            description="Look up indexed companies by name or ticker. Returns tickers and each "
+            "company's latest fiscal year. Use when you don't know a ticker.",
+            args_model=FindCompanyArgs,
+            fn=find_company,
         ),
         Tool(
             name="calculate",

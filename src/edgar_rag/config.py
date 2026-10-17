@@ -33,6 +33,11 @@ def llm_model() -> str:
     return _required("LLM_MODEL")
 
 
+def judge_model() -> str:
+    """Model that grades eval answers. Defaults to the answering model."""
+    return os.getenv("JUDGE_MODEL", "").strip() or llm_model()
+
+
 def llm_base_url() -> str:
     return os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
 

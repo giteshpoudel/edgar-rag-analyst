@@ -52,6 +52,25 @@ def chunk(ticker: str) -> None:
 
 
 @app.command()
+def ingest(tickers: str = typer.Argument(..., help="Comma-separated, e.g. AMD,INTC,QCOM")) -> None:
+    """Download, chunk and index the latest 10-K for each ticker, with a health report."""
+    from edgar_rag.pipeline import ingest as run_ingest
+
+    results = run_ingest([t.strip() for t in tickers.split(",") if t.strip()])
+    typer.echo(f"\n{'ticker':6} {'FY':>4} {'chunks':>6} {'sect':>4} {'metrics':>7}  status")
+    for h in results:
+        if h.error:
+            typer.echo(f"{h.ticker:6} {'':>4} {'':>6} {'':>4} {'':>7}  ERROR {h.error[:80]}")
+            continue
+        status = "ok" if h.ok else "; ".join(h.warnings)
+        typer.echo(
+            f"{h.ticker:6} {h.fiscal_year:>4} {h.chunks:>6} {h.sections:>4} "
+            f"{h.metrics_found:>4}/{h.metrics_found + len(h.metrics_missing):<2}  {status}"
+        )
+    typer.echo(f"\n{sum(h.ok for h in results)}/{len(results)} filings passed all checks")
+
+
+@app.command()
 def index(ticker: str) -> None:
     """Embed TICKER's chunks and store them in the vector database."""
     from edgar_rag.index import index_chunks, load_chunks
@@ -147,7 +166,7 @@ def run_eval(
         if failed:
             typer.echo(f"  failed: {', '.join(failed)}")
 
-    table = evaluation.summary_markdown(summaries, config.llm_model())
+    table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model())
     if not only:  # partial runs don't overwrite the committed summary
         (evaluation.EVALS_DIR / "results" / "summary.md").write_text(table)
     typer.echo("\n" + table)
