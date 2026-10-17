@@ -1,5 +1,9 @@
 # edgar-rag-analyst
 
-A retrieval-augmented generation (RAG) analyst for SEC EDGAR filings.
+An AI assistant that answers questions about SEC company filings (10-Ks) with cited sources.
 
-> Project plan and details coming soon — see `PROJECT_PLAN.md`.
+- **RAG** over filing text, using local embeddings and LanceDB
+- **Function calling** for exact figures from SEC XBRL data
+- **Evals** that score retrieval, numeric accuracy and refusals
+
+> 🚧 Work in progress. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
