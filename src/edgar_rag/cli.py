@@ -85,11 +85,43 @@ def search(
 @app.command()
 def ask(
     question: str,
-    k: int = typer.Option(5, help="Number of chunks to retrieve"),
-    ticker: str | None = typer.Option(None, help="Only this company, e.g. AAPL"),
-    item: str | None = typer.Option(None, help="Only this section, e.g. 1A"),
+    simple: bool = typer.Option(False, help="Phase 1 RAG only: one search, no tools"),
+    k: int = typer.Option(5, help="(--simple) Number of chunks to retrieve"),
+    ticker: str | None = typer.Option(None, help="(--simple) Only this company, e.g. AAPL"),
+    item: str | None = typer.Option(None, help="(--simple) Only this section, e.g. 1A"),
 ) -> None:
     """Answer QUESTION from the filings, with citations."""
+    if simple:
+        _ask_simple(question, k, ticker, item)
+        return
+
+    from edgar_rag.agent import ask as run_agent
+
+    result = run_agent(question)
+    typer.echo("\nTool calls:")
+    for call in result.tool_calls:
+        args = ", ".join(f"{k}={v!r}" for k, v in call.arguments.items())
+        first_line = call.result.splitlines()[0] if call.result else ""
+        typer.echo(f"  step {call.step}: {call.name}({args})")
+        typer.echo(f"          -> {first_line[:110]}")
+    if not result.tool_calls:
+        typer.echo("  (none)")
+
+    typer.echo(f"\n{result.text}\n")
+    typer.echo("Sources:")
+    for s in result.sources:
+        mark = "*" if s.n in result.cited else " "
+        typer.echo(f" {mark}[{s.n}] {s.label[:95]}")
+    typer.echo("  (* = cited in the answer)")
+    if result.invalid_citations:
+        typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
+    typer.echo(
+        f"\n{result.steps} LLM calls · {result.prompt_tokens} prompt + "
+        f"{result.completion_tokens} completion tokens"
+    )
+
+
+def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> None:
     from edgar_rag.answer import answer as run_answer
 
     result = run_answer(question, k=k, ticker=ticker, item=item)

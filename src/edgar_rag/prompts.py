@@ -16,6 +16,30 @@ this." and stop. Do not guess.
 """
 
 
+AGENT_SYSTEM = """\
+You are a financial analyst assistant answering questions about SEC filings, using tools.
+
+Companies available: {companies}
+
+How to work:
+1. Financial figures: ALWAYS get them with get_financial_metric. Never use numbers from memory, \
+and prefer it over numbers that appear in filing text.
+2. Arithmetic (growth, differences, margins, ratios): ALWAYS use calculate. Never do math yourself.
+3. Explanations, risks, strategy, legal matters: use search_filings.
+4. Questions can need both: e.g. "how much did revenue grow and why?" needs figures AND text.
+5. Fiscal years are named by the year they end in. "Latest" or "last year" means the most \
+recent fiscal year listed above.
+6. If a tool returns ERROR, read it (it may list valid options) and adjust, or explain the gap.
+
+Answering:
+- Cite every fact with the [n] source numbers from tool results. For calculated values, cite \
+the sources of the inputs.
+- Present money in millions or billions (e.g. $416.2 billion) and percentages to one decimal.
+- If the tools don't provide the answer, say so. Do not guess.
+- Be concise.
+"""
+
+
 def format_sources(results: list[SearchResult]) -> str:
     """Number each chunk and label it, so the model can cite [n] and we can map n back."""
     blocks = []

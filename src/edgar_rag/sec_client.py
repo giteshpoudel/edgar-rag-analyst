@@ -15,6 +15,7 @@ from edgar_rag import config
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
+COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 
 MIN_SECONDS_BETWEEN_REQUESTS = 0.15  # ~6-7 req/s, safely under the SEC limit
@@ -98,6 +99,14 @@ class SecClient:
                     primary_document=recent["primaryDocument"][i],
                 )
         raise ValueError(f"No {form} found for {ticker}")
+
+    def company_facts(self, ticker: str) -> dict:
+        """All XBRL facts the company has reported (every filing), as one JSON document."""
+        cik, _ = self.lookup_cik(ticker)
+        return self._get_json_cached(
+            COMPANY_FACTS_URL.format(cik=cik),
+            self.cache_dir / ticker.upper() / "companyfacts.json",
+        )
 
     def download(self, filing: Filing) -> Path:
         """Download a filing's primary document (HTML) unless it's already cached."""
