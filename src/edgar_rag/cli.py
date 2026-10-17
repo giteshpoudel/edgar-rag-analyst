@@ -51,5 +51,36 @@ def chunk(ticker: str) -> None:
         typer.echo(f"  saved: {out_path}")
 
 
+@app.command()
+def index(ticker: str) -> None:
+    """Embed TICKER's chunks and store them in the vector database."""
+    from edgar_rag.index import index_chunks, load_chunks
+
+    files = sorted((config.data_dir() / "processed" / ticker.upper()).glob("*.chunks.jsonl"))
+    if not files:
+        raise typer.BadParameter(f"No chunks for {ticker}. Run `edgar chunk {ticker}` first.")
+    for path in files:
+        count = index_chunks(load_chunks(path))
+        typer.echo(f"Indexed {count} chunks from {path.name}")
+
+
+@app.command()
+def search(
+    question: str,
+    k: int = typer.Option(5, help="Number of results"),
+    ticker: str | None = typer.Option(None, help="Only this company, e.g. AAPL"),
+    item: str | None = typer.Option(None, help="Only this section, e.g. 1A"),
+) -> None:
+    """Show the chunks most relevant to QUESTION (retrieval only, no LLM)."""
+    from edgar_rag.retriever import search as run_search
+
+    for rank, result in enumerate(run_search(question, k=k, ticker=ticker, item=item), 1):
+        c = result.chunk
+        preview = c.text[:240].replace("\n", " ")
+        typer.echo(f"\n#{rank}  score {result.score:.3f}  {c.ticker} {c.form} {c.report_date}")
+        typer.echo(f"    Item {c.item}. {c.section_title}  [{c.chunk_id}]")
+        typer.echo(f"    {preview}...")
+
+
 if __name__ == "__main__":
     app()
