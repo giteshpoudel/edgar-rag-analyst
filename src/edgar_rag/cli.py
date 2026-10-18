@@ -140,26 +140,41 @@ def ask(
     )
 
 
-@app.command(name="eval")
-def run_eval(
-    mode: str = typer.Option("both", help="agent, simple, or both"),
-    only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
-    workers: int = typer.Option(4, help="Questions answered in parallel"),
-) -> None:
-    """Run the golden question set, score it, and write evals/results/."""
+def _load_items(golden: str, split: str | None, only: str | None):
     from edgar_rag import evaluation
 
-    items = evaluation.load_golden()
+    if golden not in evaluation.GOLDEN_SETS:
+        raise typer.BadParameter(f"golden must be one of {', '.join(evaluation.GOLDEN_SETS)}")
+    items = evaluation.load_golden(evaluation.GOLDEN_SETS[golden])
+    if split:
+        items = [i for i in items if i.split in split.split(",")]
     if only:
         wanted = set(only.split(","))
         items = [i for i in items if i.id in wanted]
+    return items
+
+
+@app.command(name="eval")
+def run_eval(
+    mode: str = typer.Option("both", help="agent, simple, or both"),
+    golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (154)"),
+    split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
+    only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
+    workers: int = typer.Option(4, help="Questions answered in parallel"),
+) -> None:
+    """Run a golden question set, score it, and write the results."""
+    from edgar_rag import evaluation
+
+    items = _load_items(golden, split, only)
     modes = ["agent", "simple"] if mode == "both" else [mode]
+    out_dir = evaluation.results_dir(golden)
+    tag = f"_{split.replace(',', '+')}" if split else ""
 
     summaries = {}
     for m in modes:
         typer.echo(f"Running {len(items)} questions in {m} mode...")
         records = evaluation.run(m, items, workers=workers)
-        path = evaluation.save(records, m)
+        path = evaluation.save(records, m, out_dir, tag)
         summaries[m] = evaluation.summarize(records)
         failed = [r.id for r in records if not r.passed]
         typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · saved {path}")
@@ -168,8 +183,39 @@ def run_eval(
 
     table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model())
     if not only:  # partial runs don't overwrite the committed summary
-        (evaluation.EVALS_DIR / "results" / "summary.md").write_text(table)
+        (out_dir / f"summary{tag}.md").write_text(table)
     typer.echo("\n" + table)
+
+
+@app.command(name="retrieval-eval")
+def run_retrieval_eval(
+    golden: str = typer.Option("v2", help="Question set with evidence quotes"),
+    split: str | None = typer.Option(None, help="dev, test, regression (comma-separated)"),
+) -> None:
+    """Retrieval only (no LLM): recall@5/10/20 and MRR against the gold evidence quotes."""
+    from edgar_rag import evaluation
+
+    items = _load_items(golden, split, None)
+    records = evaluation.retrieval_eval(items)
+    if not records:
+        typer.echo("No questions with evidence quotes in this selection.")
+        return
+
+    def mean(xs):
+        return sum(xs) / len(xs)
+
+    typer.echo(f"{len(records)} questions with gold evidence")
+    typer.echo(f"{'':12} {'n':>3} {'R@5':>6} {'R@10':>6} {'R@20':>6} {'MRR':>6}")
+    groups = {"all": records}
+    for r in records:
+        groups.setdefault(r.category, []).append(r)
+    for name, rs in groups.items():
+        typer.echo(
+            f"{name:12} {len(rs):>3} {mean([r.recall[5] for r in rs]):>6.2f} {mean([r.recall[10] for r in rs]):>6.2f} "
+            f"{mean([r.recall[20] for r in rs]):>6.2f} {mean([r.reciprocal_rank for r in rs]):>6.2f}"
+        )
+    p50 = sorted(r.seconds for r in records)[len(records) // 2]
+    typer.echo(f"median search latency: {p50 * 1000:.0f} ms")
 
 
 def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> None:

@@ -4,12 +4,22 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
-from edgar_rag.scoring import Evidence, Expected, judge, number_found, retrieval_scores
+from edgar_rag.scoring import (
+    Evidence,
+    Expected,
+    judge,
+    number_found,
+    quotes_in_chunk,
+    recall_at_k,
+    reciprocal_rank,
+    retrieval_scores,
+)
 
 Mode = Literal["agent", "simple"]
 EVALS_DIR = Path("evals")
@@ -66,6 +76,10 @@ class Record(BaseModel):
     truncated: bool = False  # the system's answer was cut off at max_tokens
     malformed: bool = False  # the model wrote tool-call markup instead of an answer
     judge_error: str = ""  # the judge gave no usable verdict (excluded from judge metrics)
+    # Share of gold evidence quotes present in the passages the system actually saw
+    # (None when the question has no evidence). Separates "never found it" from "found it,
+    # answered wrong".
+    evidence_seen: float | None = None
     error: str = ""
 
 
@@ -77,6 +91,60 @@ def _item_from_chunk_id(chunk_id: str) -> str:
     return chunk_id.split(":")[1]  # "<accession>:<item>:<index>"
 
 
+@lru_cache(maxsize=1)
+def _chunk_index() -> dict:
+    from edgar_rag import config
+    from edgar_rag.chunking import Chunk
+
+    index = {}
+    for path in (config.data_dir() / "processed").glob("*/*.chunks.jsonl"):
+        for line in path.read_text().splitlines():
+            c = Chunk.model_validate_json(line)
+            index[c.chunk_id] = c
+    return index
+
+
+def _evidence_seen(chunk_ids: list[str], evidence: list[Evidence]) -> float | None:
+    if not evidence:
+        return None
+    index = _chunk_index()
+    found = [quotes_in_chunk(index[i].text, index[i].ticker, evidence) for i in chunk_ids if i in index]
+    return recall_at_k(found, len(evidence), len(found))
+
+
+# --- Retrieval-only eval (no LLM): recall@k and MRR straight from the retriever ------------
+
+
+class RetrievalRecord(BaseModel):
+    id: str
+    category: str
+    recall: dict[int, float]  # k -> recall@k
+    reciprocal_rank: float
+    seconds: float
+
+
+def retrieval_eval(items: list[GoldenItem], ks: tuple[int, ...] = (5, 10, 20)) -> list[RetrievalRecord]:
+    """Search the top max(ks) chunks for each question with gold evidence, filtered to the
+    question's company when it names one (as the agent does), and score against the quotes."""
+    from edgar_rag.retriever import search
+
+    records = []
+    for item in items:
+        if not item.evidence:
+            continue
+        tickers = sorted({e.ticker for e in item.evidence})
+        start = time.monotonic()
+        results = search(item.question, k=max(ks), ticker=tickers[0] if len(tickers) == 1 else None)
+        found = [quotes_in_chunk(r.chunk.text, r.chunk.ticker, item.evidence) for r in results]
+        records.append(RetrievalRecord(
+            id=item.id, category=item.category,
+            recall={k: recall_at_k(found, len(item.evidence), k) for k in ks},
+            reciprocal_rank=reciprocal_rank(found),
+            seconds=round(time.monotonic() - start, 3),
+        ))
+    return records
+
+
 def _run_mode(question: str, mode: Mode) -> dict:
     """Answer one question; return the parts scoring needs, independent of mode."""
     if mode == "simple":
@@ -86,6 +154,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
         return {
             "answer": r.text,
             "tools_used": ["search"],
+            "chunk_ids": [s.chunk.chunk_id for s in r.sources],
             "retrieved_items": [s.chunk.item for s in r.sources],
             "top_score": max((s.score for s in r.sources), default=None),
             "invalid_citations": r.invalid_citations,
@@ -99,6 +168,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
     return {
         "answer": r.text,
         "tools_used": [c.name for c in r.tool_calls],
+        "chunk_ids": [s.ref for s in r.sources if s.kind == "filing"],
         "retrieved_items": [_item_from_chunk_id(s.ref) for s in r.sources if s.kind == "filing"],
         "top_score": max((s.score for s in r.sources if s.score is not None), default=None),
         "invalid_citations": r.invalid_citations,
@@ -116,10 +186,12 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
         error = ""
     except Exception as e:  # noqa: BLE001 - one failure shouldn't stop the run; it's scored as a fail
         out = {"answer": "", "tools_used": [], "retrieved_items": [], "invalid_citations": [],
-               "prompt_tokens": 0, "completion_tokens": 0, "truncated": False, "top_score": None}
+               "prompt_tokens": 0, "completion_tokens": 0, "truncated": False, "top_score": None,
+               "chunk_ids": []}
         error = f"{type(e).__name__}: {e}"
     seconds = time.monotonic() - start
 
+    seen = _evidence_seen(out.pop("chunk_ids"), item.evidence)
     answer = out["answer"]
     numbers = [number_found(e, answer) for e in item.expected_numbers]
     hit, rr = (None, None)
@@ -139,7 +211,7 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
         id=item.id, category=item.category, mode=mode, question=item.question, **out,
         seconds=round(seconds, 1), numbers_found=numbers, retrieval_hit=hit,
         reciprocal_rank=rr, key_points_covered=covered, refused=refused, passed=passed,
-        judge_error=verdict.error if verdict else "", error=error,
+        judge_error=verdict.error if verdict else "", evidence_seen=seen, error=error,
     )
 
 
@@ -182,6 +254,7 @@ def summarize(records: list[Record]) -> dict:
         "truncated_answers": sum(r.truncated for r in records),
         "malformed_answers": sum(r.malformed for r in records),
         "judge_errors": sum(bool(r.judge_error) for r in records),
+        "evidence_seen": _mean([r.evidence_seen for r in records if r.evidence_seen is not None]),
     }
     return out
 
@@ -194,7 +267,13 @@ ROWS = [
     ("Comparison questions (across companies)", "pass_comparison", "pct"),
     ("Trend questions (across years)", "pass_trend", "pct"),
     ("Sector questions (13 semiconductor companies)", "pass_sector", "pct"),
+    ("Multi-hop (two sections)", "pass_multi_hop", "pct"),
+    ("Long-tail sections (legal, market risk, controls)", "pass_long_tail", "pct"),
+    ("Text-table facts (not in XBRL)", "pass_text_table", "pct"),
+    ("Ambiguous company names", "pass_ambiguous", "pct"),
+    ("Near-miss unanswerable (refused correctly)", "pass_near_miss", "pct"),
     ("Unanswerable (refused correctly)", "pass_unanswerable", "pct"),
+    ("Gold evidence in passages seen", "evidence_seen", "pct"),
     ("Number accuracy", "number_accuracy", "pct"),
     ("Retrieval hit rate (right section retrieved)", "retrieval_hit_rate", "pct"),
     ("Retrieval MRR", "mrr", "num"),
@@ -232,9 +311,17 @@ def summary_markdown(summaries: dict[str, dict], model: str, judge: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def save(records: list[Record], mode: Mode) -> Path:
-    out_dir = EVALS_DIR / "results"
+GOLDEN_SETS = {"v1": EVALS_DIR / "golden.jsonl", "v2": EVALS_DIR / "golden_v2.jsonl"}
+
+
+def results_dir(golden: str) -> Path:
+    """v1 results stay where they were; v2 results go in their own folder."""
+    return EVALS_DIR / "results" if golden == "v1" else EVALS_DIR / "results" / golden
+
+
+def save(records: list[Record], mode: Mode, out_dir: Path | None = None, tag: str = "") -> Path:
+    out_dir = out_dir or EVALS_DIR / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{mode}.jsonl"
+    path = out_dir / f"{mode}{tag}.jsonl"
     path.write_text("".join(json.dumps(r.model_dump()) + "\n" for r in records))
     return path

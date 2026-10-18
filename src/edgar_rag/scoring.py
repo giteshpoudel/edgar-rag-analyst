@@ -17,7 +17,8 @@ from edgar_rag.llm import complete
 SCALES = {"trillion": 1e12, "billion": 1e9, "bn": 1e9, "b": 1e9, "million": 1e6, "m": 1e6}
 NUMBER_RE = re.compile(
     r"(?<![\w.])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)"  # 416,161 or 416.2 or 7.46
-    r"\s*(%|percent\b|trillion\b|billion\b|million\b|bn\b|b\b|m\b)?",
+    r"\s*(%|percentage points?\b|percent\b|pp\b|basis points?\b|bps\b|"
+    r"trillion\b|billion\b|million\b|bn\b|b\b|m\b)?",
     re.IGNORECASE,
 )
 
@@ -43,8 +44,10 @@ def extract_numbers(text: str) -> tuple[list[float], list[float]]:
     for match in NUMBER_RE.finditer(text):
         value = float(match.group(1).replace(",", ""))
         unit = (match.group(2) or "").lower()
-        if unit in ("%", "percent"):
+        if unit in ("%", "percent", "pp") or unit.startswith("percentage point"):
             percents.append(value)
+        elif unit in ("bps",) or unit.startswith("basis point"):
+            percents.append(value / 100)  # 60 bps = 0.6 percentage points
         else:
             plain.append(value * SCALES.get(unit, 1))
     return plain, percents
