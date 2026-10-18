@@ -9,22 +9,39 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from edgar_rag.scoring import Expected, judge, number_found, retrieval_scores
+from edgar_rag.scoring import Evidence, Expected, judge, number_found, retrieval_scores
 
 Mode = Literal["agent", "simple"]
 EVALS_DIR = Path("evals")
 PASS_COVERAGE = 2 / 3  # narrative answers must cover at least this share of key points
-CATEGORIES = ("numeric", "narrative", "mixed", "comparison", "trend", "sector", "unanswerable")
+CATEGORIES = (
+    "numeric", "narrative", "mixed", "comparison", "trend", "sector",
+    # v2: harder categories v1 never faced
+    "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss",
+    "unanswerable",
+)
+# Categories where the right answer is to decline (near_miss = plausible-looking but unanswerable).
+REFUSAL_CATEGORIES = ("unanswerable", "near_miss")
 
 
 class GoldenItem(BaseModel):
     id: str
-    category: Literal["numeric", "narrative", "mixed", "comparison", "trend", "sector", "unanswerable"]
+    category: Literal[
+        "numeric", "narrative", "mixed", "comparison", "trend", "sector",
+        "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss", "unanswerable",
+    ]
     question: str
     expected_numbers: list[Expected] = []
     expected_items: list[str] = []
     key_points: list[str] = []
     should_refuse: bool = False
+    # v2 fields (all optional, so v1's golden.jsonl still loads)
+    split: Literal["regression", "dev", "test"] | None = None  # regression = v1's 58 questions
+    evidence: list[Evidence] = []  # gold quotes for recall@k (D-52)
+    companies: list[str] = []  # tickers the question is about
+    source: Literal["v1", "generated", "template"] | None = None
+    verified: bool = False  # set only after checking against the filing / XBRL
+    notes: str = ""  # how it was verified, or why it's unanswerable
 
 
 class Record(BaseModel):
@@ -112,7 +129,7 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
     covered = verdict.key_points if verdict else [False] * len(item.key_points)
     refused = verdict.refused if verdict else True
 
-    if item.category == "unanswerable":
+    if item.category in REFUSAL_CATEGORIES:
         passed = refused
     else:
         coverage_ok = not item.key_points or sum(covered) / len(covered) >= PASS_COVERAGE
@@ -139,8 +156,8 @@ def _mean(values: list[float]) -> float | None:
 
 
 def summarize(records: list[Record]) -> dict:
-    answerable = [r for r in records if r.category != "unanswerable"]
-    unanswerable = [r for r in records if r.category == "unanswerable"]
+    answerable = [r for r in records if r.category not in REFUSAL_CATEGORIES]
+    unanswerable = [r for r in records if r.category in REFUSAL_CATEGORIES]
     with_retrieval = [r for r in records if r.retrieval_hit is not None]
     with_points = [r for r in records if r.key_points_covered and not r.judge_error]
     numbers = [n for r in records for n in r.numbers_found]
