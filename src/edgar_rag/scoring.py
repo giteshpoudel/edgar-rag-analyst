@@ -57,7 +57,9 @@ def number_found(expected: Expected, text: str) -> bool:
     plain, percents = extract_numbers(text)
     tol = expected.tolerance
     if expected.kind == "percent":
-        return any(abs(p - expected.value) <= (tol or PERCENT_ABS_TOL) for p in percents)
+        # Magnitude only: a decline of -37.5% is usually written "fell 37.5%". The judge's key
+        # points check the direction ("fell"), so the number check doesn't double-count it.
+        return any(abs(abs(p) - abs(expected.value)) <= (tol or PERCENT_ABS_TOL) for p in percents)
     if expected.kind == "usd_per_share":
         return any(abs(p - expected.value) <= (tol or PER_SHARE_ABS_TOL) for p in plain)
     # Dollar amounts may be written without a scale word inside tables ("416,161" in millions).

@@ -669,8 +669,11 @@ def assemble(seed: str = "v2", spot_checks: int = 20) -> None:
     review = json.loads(REVIEW.read_text())
     regression = [json.loads(line) for line in MIGRATED.read_text().splitlines() if line]
     generated = []
-    for line in VERIFIED.read_text().splitlines():
+    hard_checked = EVALS / "candidates_v2_hard.checked.jsonl"
+    lines = VERIFIED.read_text().splitlines() + (hard_checked.read_text().splitlines() if hard_checked.exists() else [])
+    for line in lines:
         q = json.loads(line)
+        q.pop("word_overlap", None)
         if q["id"] in review["reject"]:
             continue
         fix = {k: v for k, v in review["fix"].get(q["id"], {}).items() if k != "reason"}
@@ -683,33 +686,41 @@ def assemble(seed: str = "v2", spot_checks: int = 20) -> None:
     template = [json.loads(line) for line in TEMPLATES.read_text().splitlines() if line]
     new = generated + template
 
-    # Stratified split: within each category, order by a stable hash and take the first 35% as dev.
+    # Each question's split depends only on its own id, so adding questions later never moves an
+    # existing question between dev and test (no accidental tuning on test).
     by_cat: dict[str, list[dict]] = {}
     for q in new:
         by_cat.setdefault(q["category"], []).append(q)
-    for qs in by_cat.values():
-        qs.sort(key=lambda q: stable_rank(q["id"], seed))
-        n_dev = round(len(qs) * DEV_SHARE)
-        for i, q in enumerate(qs):
-            q["split"] = "dev" if i < n_dev else "test"
+        q["split"] = "dev" if int(stable_rank(q["id"], seed), 16) / 16 ** 64 < DEV_SHARE else "test"
 
     everything = regression + new
     ids = [q["id"] for q in everything]
     assert len(ids) == len(set(ids)), "duplicate question ids"
     GOLDEN_V2.write_text("".join(json.dumps(q) + "\n" for q in everything))
 
-    # Spot-check sample: spread across categories, drawn from the questions Claude verified.
-    pool = sorted(generated + [q for q in template if q["category"] != "near_miss"],
-                  key=lambda q: stable_rank(q["id"], seed + "-spot"))
-    picked, seen = [], {}
-    for q in pool:
-        if seen.get(q["category"], 0) < max(2, spot_checks // 5) and len(picked) < spot_checks:
-            picked.append(q)
-            seen[q["category"]] = seen.get(q["category"], 0) + 1
-    lines = ["# v2 spot-check", "",
-             (f"{len(picked)} questions sampled at random across categories from the {len(generated) + len(template)} "
-             "Claude-verified questions. For each, check that the question is clear and fair, and that the expected "
-             "answer is right. Mark each **OK** or describe the problem."), ""]
+    # Spot-check: once the reviewer has checked a sample, keep exactly that sample and record the
+    # verdict; otherwise draw a fresh stratified sample from the questions Claude verified.
+    by_id = {q["id"]: q for q in generated + template}
+    done = review.get("spot_check")
+    if done:
+        picked = [by_id[i] for i in done["ids"] if i in by_id]
+        lines = ["# v2 spot-check", "",
+                 f"**Reviewed {done['date']} by {done['reviewer']}:** {done['verdict']} {done['caveat']}",
+                 f"*{done['recorded_by']}.*", "",
+                 (f"{len(picked)} questions sampled at random across categories from the round-1 "
+                  "Claude-verified questions."), ""]
+    else:
+        pool = sorted(generated + [q for q in template if q["category"] != "near_miss"],
+                      key=lambda q: stable_rank(q["id"], seed + "-spot"))
+        picked, seen = [], {}
+        for q in pool:
+            if seen.get(q["category"], 0) < max(2, spot_checks // 5) and len(picked) < spot_checks:
+                picked.append(q)
+                seen[q["category"]] = seen.get(q["category"], 0) + 1
+        lines = ["# v2 spot-check", "",
+                 (f"{len(picked)} questions sampled at random across categories from the {len(generated) + len(template)} "
+                  "Claude-verified questions. For each, check that the question is clear and fair, and that the expected "
+                  "answer is right. Mark each **OK** or describe the problem."), ""]
     for i, q in enumerate(picked, 1):
         lines += [f"## {i}. `{q['id']}` ({q['category']}, {', '.join(q['companies'])})", "", f"**Q:** {q['question']}", ""]
         if q.get("key_points"):
@@ -725,7 +736,7 @@ def assemble(seed: str = "v2", spot_checks: int = 20) -> None:
             lines += ["**Evidence in the filing:**"] + [f"> {e['quote']}" for e in q["evidence"]] + [""]
         if q.get("notes"):
             lines += [f"*{q['notes']}*", ""]
-        lines += ["**Your verdict:** ", "", "---", ""]
+        lines += [f"**Verdict:** {'OK' if done else ''}", "", "---", ""]
     SPOTCHECK.write_text("\n".join(lines))
 
     import collections

@@ -28,6 +28,8 @@ CATEGORIES = (
     "numeric", "narrative", "mixed", "comparison", "trend", "sector",
     # v2: harder categories v1 never faced
     "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss",
+    # v2 hard round
+    "table_calc", "cross_company", "enumeration",
     "unanswerable",
 )
 # Categories where the right answer is to decline (near_miss = plausible-looking but unanswerable).
@@ -38,7 +40,8 @@ class GoldenItem(BaseModel):
     id: str
     category: Literal[
         "numeric", "narrative", "mixed", "comparison", "trend", "sector",
-        "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss", "unanswerable",
+        "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss",
+        "table_calc", "cross_company", "enumeration", "unanswerable",
     ]
     question: str
     expected_numbers: list[Expected] = []
@@ -52,6 +55,7 @@ class GoldenItem(BaseModel):
     source: Literal["v1", "generated", "template"] | None = None
     verified: bool = False  # set only after checking against the filing / XBRL
     notes: str = ""  # how it was verified, or why it's unanswerable
+    tags: list[str] = []  # e.g. "paraphrased"
 
 
 class Record(BaseModel):
@@ -272,6 +276,9 @@ ROWS = [
     ("Text-table facts (not in XBRL)", "pass_text_table", "pct"),
     ("Ambiguous company names", "pass_ambiguous", "pct"),
     ("Near-miss unanswerable (refused correctly)", "pass_near_miss", "pct"),
+    ("Calculations on text-table figures", "pass_table_calc", "pct"),
+    ("Same topic across several companies", "pass_cross_company", "pct"),
+    ("Complete enumerations (4+ items)", "pass_enumeration", "pct"),
     ("Unanswerable (refused correctly)", "pass_unanswerable", "pct"),
     ("Gold evidence in passages seen", "evidence_seen", "pct"),
     ("Number accuracy", "number_accuracy", "pct"),
