@@ -386,6 +386,23 @@ def parse_written(as_written: str) -> float | None:
         return None
 
 
+def precision_tolerance(written: str, value: float, kind: str) -> dict:
+    """A figure written rounded ("$2.8 billion") is only known to half its last digit, so an answer
+    giving the exact "$2.782 billion" is right. Widen the tolerance to that precision when it is
+    looser than the default; never tighten it."""
+    from edgar_rag.scoring import PERCENT_ABS_TOL, USD_REL_TOL
+
+    digits = written.replace("$", "").replace(",", "").replace("%", "").strip("() ")
+    decimals = len(digits.split(".")[1]) if "." in digits else 0
+    half_unit = 0.5 * 10 ** -decimals
+    if kind == "percent":
+        return {"tolerance": round(half_unit, 6)} if half_unit > PERCENT_ABS_TOL else {}
+    if value and kind in ("usd", "count"):
+        rel = half_unit / abs(value)
+        return {"tolerance": round(rel, 6)} if rel > USD_REL_TOL else {}
+    return {}
+
+
 def check_candidate(c: dict, chunk_index: dict[str, Chunk]) -> tuple[dict, list[str]]:
     """Mechanical checks. Returns the cleaned question and a list of problems (empty = passes)."""
     from edgar_rag.xbrl import PUBLIC_METRICS, CompanyFacts, FactNotFound
@@ -433,7 +450,7 @@ def check_candidate(c: dict, chunk_index: dict[str, Chunk]) -> tuple[dict, list[
             problems.append(f"number {written!r} not in any quote")
             continue
         multiplier = 1 if kind in ("percent", "usd_per_share") else float(n.get("multiplier") or 1)
-        numbers.append({"value": value * multiplier, "kind": kind})
+        numbers.append({"value": value * multiplier, "kind": kind, **precision_tolerance(written, value, kind)})
 
     # Text-table questions must not just restate an XBRL metric (another tool covers those).
     if c["category"] == "text_table":

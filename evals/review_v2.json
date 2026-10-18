@@ -16,12 +16,20 @@
     "narr-012": "Circular: the question contains its own answer ('adverse customer reaction')",
     "mult-006": "Not really multi-hop: two unrelated boilerplate statements stapled together",
     "mult-013": "Not really multi-hop: two unrelated boilerplate statements stapled together",
-    "mult-017": "Not really multi-hop: product list plus a generic economic-conditions sentence"
+    "mult-017": "Not really multi-hop: product list plus a generic economic-conditions sentence",
+    "mult-005": "Unfair: Microsoft lists several areas requiring judgment; a correct answer can name other valid ones (found in the first v1 run)"
   },
   "fix": {
     "text-016": {
-      "expected_numbers": [{"value": 184670000, "kind": "usd"}],
-      "key_points": ["Foreign current tax expense was $184.7 million (184,670 thousand) in fiscal 2025"],
+      "expected_numbers": [
+        {
+          "value": 184670000,
+          "kind": "usd"
+        }
+      ],
+      "key_points": [
+        "Foreign current tax expense was $184.7 million (184,670 thousand) in fiscal 2025"
+      ],
       "reason": "ADI's tables are in thousands ('all tabular amounts in thousands'); the draft recorded 184,670 dollars"
     },
     "narr-001": {
@@ -29,15 +37,21 @@
       "reason": "A year (2040) belongs in the key point, not number matching, where it could match other values"
     },
     "text-002": {
-      "key_points": ["Amortization of acquired intangible assets was $749.7 million (749,662 thousand) in fiscal 2025"],
+      "key_points": [
+        "Amortization of acquired intangible assets was $749.7 million (749,662 thousand) in fiscal 2025"
+      ],
       "reason": "State the unit in the key point; value already correct (tables in thousands, checked against XBRL revenue)"
     },
     "text-004": {
-      "key_points": ["Interest expense was $284.4 million (284,440 thousand) in fiscal 2026"],
+      "key_points": [
+        "Interest expense was $284.4 million (284,440 thousand) in fiscal 2026"
+      ],
       "reason": "State the unit in the key point"
     },
     "text-021": {
-      "key_points": ["Deferred profit was $2.28 billion (2,279,168 thousand) as of June 28, 2026"],
+      "key_points": [
+        "Deferred profit was $2.28 billion (2,279,168 thousand) as of June 28, 2026"
+      ],
       "reason": "State the unit in the key point"
     }
   }

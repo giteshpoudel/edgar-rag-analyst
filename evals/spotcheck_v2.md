@@ -1,6 +1,6 @@
 # v2 spot-check
 
-20 questions sampled at random across categories from the 96 Claude-verified questions. For each, check that the question is clear and fair, and that the expected answer is right. Mark each **OK** or describe the problem.
+20 questions sampled at random across categories from the 95 Claude-verified questions. For each, check that the question is clear and fair, and that the expected answer is right. Mark each **OK** or describe the problem.
 
 ## 1. `narr-005` (narrative, INTC)
 
