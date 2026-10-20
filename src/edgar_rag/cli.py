@@ -161,6 +161,7 @@ def run_eval(
     split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
     only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
     workers: int = typer.Option(4, help="Questions answered in parallel"),
+    repeat: int = typer.Option(1, help="Runs per mode; >1 reports mean, range and flip rate"),
 ) -> None:
     """Run a golden question set, score it, and write the results."""
     from edgar_rag import evaluation
@@ -169,6 +170,9 @@ def run_eval(
     modes = ["agent", "simple"] if mode == "both" else [mode]
     out_dir = evaluation.results_dir(golden)
     tag = f"_{split.replace(',', '+')}" if split else ""
+    if repeat > 1:
+        _repeat_runs(modes, items, workers, repeat, out_dir, tag)
+        return
 
     summaries = {}
     for m in modes:
@@ -185,6 +189,64 @@ def run_eval(
     if not only:  # partial runs don't overwrite the committed summary
         (out_dir / f"summary{tag}.md").write_text(table)
     typer.echo("\n" + table)
+
+
+def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
+    import json
+
+    from edgar_rag import evaluation
+    from edgar_rag.stats import summarize_runs
+
+    for m in modes:
+        runs = []
+        for k in range(1, repeat + 1):
+            typer.echo(f"{m} run {k}/{repeat}: {len(items)} questions...")
+            records = evaluation.run(m, items, workers=workers)
+            evaluation.save(records, m, out_dir, f"{tag}_run{k}")
+            runs.append([json.loads(r.model_dump_json()) for r in records])
+            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed")
+        s = summarize_runs(runs)
+        typer.echo(
+            f"{m}: mean {s.mean:.1%} (range {s.low:.1%}-{s.high:.1%}) over {s.runs} runs; "
+            f"{s.flip_rate:.1%} of questions changed result between runs"
+        )
+        (out_dir / f"{m}{tag}_runs.json").write_text(s.model_dump_json(indent=2))
+
+
+@app.command()
+def compare(
+    a: str = typer.Argument(..., help="Result files for config A, a glob such as 'agent_dev+test_run*'"),
+    b: str = typer.Argument(..., help="Result files for config B"),
+    golden: str = typer.Option("v2", help="Which results folder"),
+    split: str | None = typer.Option(None, help="Only these splits (dev, test, ...)"),
+) -> None:
+    """Paired bootstrap 95% CI for the pass-rate difference B - A."""
+    import json
+
+    from edgar_rag import evaluation
+    from edgar_rag.stats import paired_bootstrap, summarize_runs
+
+    out_dir = evaluation.results_dir(golden)
+    keep = None
+    if split:
+        keep = {i.id for i in _load_items(golden, split, None)}
+
+    def load(pattern):
+        files = sorted(out_dir.glob(pattern + ("" if pattern.endswith(".jsonl") else ".jsonl")))
+        if not files:
+            raise typer.BadParameter(f"no result files match {pattern} in {out_dir}")
+        runs = [[json.loads(line) for line in f.read_text().splitlines() if line] for f in files]
+        return [[r for r in run if keep is None or r["id"] in keep] for run in runs], files
+
+    runs_a, files_a = load(a)
+    runs_b, files_b = load(b)
+    for name, runs, files in (("A", runs_a, files_a), ("B", runs_b, files_b)):
+        s = summarize_runs(runs)
+        typer.echo(f"{name}: {', '.join(f.name for f in files)}: mean {s.mean:.1%} "
+                   f"(range {s.low:.1%}-{s.high:.1%}), flip rate {s.flip_rate:.1%}")
+    c = paired_bootstrap(runs_a, runs_b)
+    verdict = "significant" if c.significant else "not significant (could be noise)"
+    typer.echo(f"B - A = {c.diff:+.1%}, 95% CI [{c.ci_low:+.1%}, {c.ci_high:+.1%}] over {c.questions} questions: {verdict}")
 
 
 @app.command(name="retrieval-eval")
