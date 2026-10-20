@@ -39,7 +39,9 @@ def main() -> None:
 EVALS = Path(__file__).resolve().parent
 HARD = EVALS / "candidates_v2_hard.jsonl"
 HARD_CHECKED = EVALS / "candidates_v2_hard.checked.jsonl"
-LABELS = "ABC"
+LABELS = "ABCDE"
+WEAK = EVALS / "candidates_v2_weak.jsonl"
+WEAK_CHECKED = EVALS / "candidates_v2_weak.checked.jsonl"
 MAX_OVERLAP = 0.5  # paraphrased: at most half the question's content words may come from the passage
 
 PARAPHRASE_RULE = (
@@ -243,7 +245,8 @@ def draft_one(job: dict) -> dict | None:
     elif cat == "cross_company":
         system = CROSS_SYSTEM.format(topic=job["topic"])
     else:
-        system = base.DRAFT_SYSTEM.format(rule=base.CATEGORY_RULES[cat] + PARAPHRASE_RULE)
+        extra = PARAPHRASE_RULE if "paraphrased" in job["tags"] else ""
+        system = base.DRAFT_SYSTEM.format(rule=base.CATEGORY_RULES[cat] + extra)
     data = base.ask_json(system, blocks)
     if not data or data.get("skip") or not data.get("question"):
         return None
@@ -278,6 +281,76 @@ def draft(paraphrased: int = 24, table_calc: int = 16, cross_company: int = 12, 
                + ", ".join(f"{k} {v}" for k, v in sorted(counters.items())))
 
 
+# --- weak-spot round -----------------------------------------------------------------------
+
+DEEP_TABLE_ITEMS = ["8", "15", "16"]  # financial statements and their notes
+
+
+def sample_weak(cross: int, deep: int, seed: int, exclude: set[str], prior_groups=()) -> list[dict]:
+    """Questions aimed at v1's weak spots, chosen by design (bigger company groups, long note
+    tables), never by where the current retriever fails: that would bias the eval toward
+    whatever replaces it."""
+    rng = random.Random(seed)
+    by_ticker = {t: base.chunks_for(t) for t in base.ALL_TICKERS}
+    used = set(exclude)
+    jobs = []
+
+    # Several companies at once: groups of 4-5 per topic. A company's disclosure may be reused
+    # (the comparison is new), but never the same company group on the same topic twice.
+    seen_groups = set(prior_groups)
+    for topic, pattern in TOPICS.items():
+        rx = re.compile(pattern, re.IGNORECASE)
+        matches = {t: next((c for c in by_ticker[t] if rx.search(c.text)), None) for t in base.ALL_TICKERS}
+        names = sorted(t for t, c in matches.items() if c)
+        for size in (4, 5, 4):
+            if sum(j["category"] == "cross_company" for j in jobs) >= cross or len(names) < size:
+                break
+            for _ in range(10):
+                group = tuple(sorted(rng.sample(names, size)))
+                # Groups on one topic must differ by 2+ companies, or they'd pass and fail together.
+                distinct = all(len(set(group) ^ set(g)) >= 2 for tp, g in seen_groups if tp == topic)
+                if (topic, group) not in seen_groups and distinct:
+                    seen_groups.add((topic, group))
+                    jobs.append({"category": "cross_company", "tags": ["weak_spot"], "topic": topic,
+                                 "passages": [matches[t] for t in group]})
+                    break
+
+    # Deep-table facts: long note tables in the financial statements.
+    tickers = base.ALL_TICKERS[:]
+    rng.shuffle(tickers)
+    for t in tickers * 3:
+        if sum(j["category"] == "text_table" for j in jobs) >= deep:
+            break
+        pool = [c for c in by_ticker[t] if c.item in DEEP_TABLE_ITEMS and base.table_rows(c) >= 8 and c.chunk_id not in used]
+        if pool:
+            c = rng.choice(pool)
+            used.add(c.chunk_id)
+            jobs.append({"category": "text_table", "tags": ["weak_spot", "deep_table"], "passages": [c]})
+    return jobs
+
+
+@app.command(name="draft-weak")
+def draft_weak(cross: int = 12, deep: int = 12, seed: int = 23, workers: int = 6) -> None:
+    """Draft the weak-spot round from chunks no earlier round used."""
+    used = set()
+    for path in (base.CANDIDATES, HARD):
+        used |= {i for line in path.read_text().splitlines() if line for i in json.loads(line)["source_chunks"]}
+    prior = {(c.get("topic"), tuple(sorted(c["companies"]))) for c in map(json.loads, HARD.read_text().splitlines())
+             if c["category"] == "cross_company"}
+    jobs = sample_weak(cross, deep, seed, used, prior)
+    typer.echo(f"Drafting {len(jobs)} weak-spot candidates with {config.judge_model()}...")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        drafted = [d for d in pool.map(draft_one, jobs) if d]
+    counters: dict[str, int] = {}
+    prefix = {"cross_company": "wxco", "text_table": "wtab"}
+    for d in drafted:
+        counters[d["category"]] = counters.get(d["category"], 0) + 1
+        d["id"] = f"{prefix[d['category']]}-{counters[d['category']]:03d}"
+    WEAK.write_text("".join(json.dumps(d) + "\n" for d in drafted))
+    typer.echo(f"Saved {len(drafted)} candidates ({len(jobs) - len(drafted)} skipped) -> {WEAK.name}: "
+               + ", ".join(f"{k} {v}" for k, v in sorted(counters.items())))
+
+
 # --- verification --------------------------------------------------------------------------
 
 
@@ -309,6 +382,27 @@ def column_years_ok(row_quote: str, operands: list[dict], chunk: Chunk) -> str |
         if col < len(year_cols) and year_cols[col] != label_year.group(0):
             return f"operand {written} is in the {year_cols[col]} column but labelled {label_year.group(0)}"
     return None
+
+
+def xbrl_duplicates(numbers: list[dict], chunk: Chunk) -> list[str]:
+    """A text-table figure that equals one of the 12 XBRL metrics would test the wrong tool."""
+    from edgar_rag.xbrl import PUBLIC_METRICS, CompanyFacts, FactNotFound
+
+    try:
+        facts = CompanyFacts(chunk.ticker)
+    except (ValueError, KeyError):
+        return []
+    values = []
+    for m in PUBLIC_METRICS:
+        try:
+            values.append(abs(facts.get(m, int(chunk.report_date[:4])).value))
+        except FactNotFound:
+            pass
+    return [
+        f"text_table number {n['value']:,.0f} equals an XBRL metric"
+        for n in numbers
+        if n["kind"] == "usd" and any(v and abs(abs(n["value"]) - v) / v < 0.005 for v in values)
+    ]
 
 
 def compute(operation: str, a: float, b: float) -> float | None:
@@ -408,6 +502,10 @@ def check(c: dict, chunk_index: dict[str, Chunk]) -> tuple[dict, list[str]]:
             numbers.append({"value": value * mult, "kind": kind, **base.precision_tolerance(written, value * mult, kind)})
         if c["category"] == "enumeration" and len(numbers) < 4:
             problems.append(f"enumeration has {len(numbers)} values (needs 4+)")
+        if c["category"] == "text_table":
+            if not numbers:
+                problems.append("text_table question has no expected number")
+            problems += xbrl_duplicates(numbers, passages[0])
 
     q = c["question"]
     if any(w in q.lower() for w in (*base.BANNED_WORDS, "table")):
@@ -429,15 +527,16 @@ def check(c: dict, chunk_index: dict[str, Chunk]) -> tuple[dict, list[str]]:
 
 
 @app.command()
-def verify() -> None:
+def verify(round: str = typer.Option("hard", help="hard or weak")) -> None:
+    source, target = (HARD, HARD_CHECKED) if round == "hard" else (WEAK, WEAK_CHECKED)
     chunk_index = {c.chunk_id: c for t in base.ALL_TICKERS for c in base.chunks_for(t)}
-    cands = [json.loads(line) for line in HARD.read_text().splitlines() if line]
+    cands = [json.loads(line) for line in source.read_text().splitlines() if line]
     passed, failed = [], []
     for c in cands:
         q, problems = check(c, chunk_index)
         (failed if problems else passed).append((q, problems))
-    HARD_CHECKED.write_text("".join(json.dumps(q) + "\n" for q, _ in passed))
-    typer.echo(f"{len(passed)}/{len(cands)} hard candidates passed -> {HARD_CHECKED.name}")
+    target.write_text("".join(json.dumps(q) + "\n" for q, _ in passed))
+    typer.echo(f"{len(passed)}/{len(cands)} {round} candidates passed -> {target.name}")
     cats: dict[str, list[int]] = {}
     for q, p in passed + failed:
         cats.setdefault(q["category"] + ("*" if "paraphrased" in q["tags"] else ""), [0, 0])[1 if p else 0] += 1

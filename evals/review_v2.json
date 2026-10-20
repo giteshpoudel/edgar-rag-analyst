@@ -19,7 +19,10 @@
     "mult-017": "Not really multi-hop: product list plus a generic economic-conditions sentence",
     "mult-005": "Unfair: Microsoft lists several areas requiring judgment; a correct answer can name other valid ones (found in the first v1 run)",
     "hlt-005": "Boilerplate even when paraphrased: CEO and CFO responsible for internal controls",
-    "hlt-006": "Boilerplate even when paraphrased: disclosure controls effective (already covered by long-017)"
+    "hlt-006": "Boilerplate even when paraphrased: disclosure controls effective (already covered by long-017)",
+    "wxco-002": "Muddled: mixes Lam's restructuring terminations (1,760) into a headcount comparison",
+    "wtab-003": "Year can't be confirmed: the per-share amount sits in the row label and the year columns are dashes",
+    "wtab-007": "From the exhibit index; the rate is written into the note's name"
   },
   "fix": {
     "text-016": {

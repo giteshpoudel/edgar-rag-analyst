@@ -52,6 +52,8 @@ Build a set that v1 fails often enough to measure progress.
 
 **Done when:** v1 scores 70–85% on test, with per-category scores.
 
+> **Amended 2026-10-19 (owner decision).** After two rounds (177 questions) v1 still scored 96% on test: it recovers from search misses by searching again, and its failures cluster in four weak spots (several companies at once, ambiguous names, derived figures, deep-table facts). W1 is now done when (1) a targeted round covers those four weak spots, chosen by question design rather than by where the current retriever fails (to avoid selection bias), and (2) per-category scores are reported. The 70–85% figure stays a reference, not a gate.
+
 ### W2. Hybrid search, reranking and ablations
 
 Measure each retrieval upgrade instead of assuming it helps.
@@ -63,6 +65,8 @@ Measure each retrieval upgrade instead of assuming it helps.
 5. Report recall@5/10/20, MRR, end-to-end pass rate, tokens and p50/p95 latency for each config.
 
 **Done when:** an ablation table on test picks the default config and states its cost.
+
+> **Amended 2026-10-19 (owner decision).** Because end-to-end pass rate has little headroom, retrieval changes are judged mainly on retrieval-only recall@5/10/20 and MRR (v1 vector search: R@5 0.67) and on cost per question (searches, tokens, latency), with pass rate reported as a secondary check that nothing got worse.
 
 ### W3. Number grounding checker
 

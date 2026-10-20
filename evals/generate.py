@@ -642,6 +642,79 @@ def templates() -> None:
         [((v("AAPL", "operating_income", 2025) / v("AAPL", "revenue", 2025)
            - v("AAPL", "operating_income", 2024) / v("AAPL", "revenue", 2024)) * 100, "percent")], companies=["AAPL"])
 
+    # --- Weak-spot round (2026-10-19): v1's real failure types, chosen by design. -------------
+    weak = len(out)
+
+    # Ambiguous descriptions that fit several indexed companies: the right answer asks which one
+    # or covers the candidates. Candidates checked against the filings' own text (Intel's 10-K
+    # doesn't state its Santa Clara headquarters, so it isn't required).
+    add("wamb-001", "ambiguous", "What was the Santa Clara-based semiconductor company's revenue in its latest fiscal year?",
+        key_points=[("Says several companies fit (NVIDIA, AMD and Applied Materials are all based in Santa Clara) "
+                    "and asks which one or gives figures for the candidates")],
+        notes="Ambiguous by design; NVIDIA, AMD and Applied Materials each state a Santa Clara headquarters (checked).",
+        companies=["NVDA", "AMD", "AMAT"])
+    add("wamb-002", "ambiguous", "How much did the analog chipmaker earn in net income last year?",
+        key_points=[("Says several companies fit (e.g. Texas Instruments, Analog Devices, Microchip) and asks "
+                    "which one or gives figures for the candidates")],
+        notes="Ambiguous by design: three indexed companies make analog chips.", companies=["TXN", "ADI", "MCHP"])
+    # Resolvable from a product name (each product appears in that company's filing, checked).
+    add("wamb-003", "ambiguous", "What was total revenue for the Xbox maker in its latest fiscal year?",
+        [(v("MSFT", "revenue"), "usd")], ["Identifies the company as Microsoft"], companies=["MSFT"])
+    add("wamb-004", "ambiguous", "What was net income at the company behind Snapdragon chips in fiscal 2025?",
+        [(v("QCOM", "net_income", 2025), "usd")], ["Identifies the company as Qualcomm"], companies=["QCOM"])
+    add("wamb-005", "ambiguous", "How much did the maker of EPYC processors spend on R&D in fiscal 2025?",
+        [(v("AMD", "research_and_development", 2025), "usd")], ["Identifies the company as AMD"], companies=["AMD"])
+    add("wamb-006", "ambiguous", "What was the GeForce maker's diluted EPS in its latest fiscal year?",
+        [(v("NVDA", "eps_diluted"), "usd_per_share")], ["Identifies the company as NVIDIA"], companies=["NVDA"])
+
+    # Figures that exist only as derived values: a correct answer says so (v1 often didn't).
+    for i, (t, name, year) in enumerate([("AMD", "AMD", 2025), ("INTC", "Intel", 2025),
+                                         ("ADI", "Analog Devices", 2025), ("MCHP", "Microchip", 2026)], 1):
+        fact = cf[t].get("total_liabilities", year)
+        assert fact.tag.startswith("derived"), f"{t} total liabilities is reported, not derived"
+        add(f"wder-{i:03d}", "numeric", f"What were {name}'s total liabilities at the end of fiscal {year}?",
+            [(fact.value, "usd")],
+            [(f"Says the figure is derived ({name} reports no total liabilities line; computed as total "
+             "liabilities and equity minus equity)")],
+            notes="Derived metric: the company's balance sheet has no total liabilities line (checked).",
+            companies=[t])
+    # Several companies at once: headcounts, which every company states in one sentence in Item 1.
+    # The drafting model mostly declined 4-5-company questions, so these are built from the
+    # filings' own sentences; each quote is checked for exactness and distinctiveness.
+    head_rx = re.compile(r"(?:approximately|about) ([\d,]+) (?:full-time equivalent |full-time )?(?:employees|people)[^.]*\.", re.IGNORECASE)
+    headcount: dict[str, tuple[float, str]] = {}
+    for t in ALL_TICKERS:
+        for chunk in chunks_for(t):
+            m = head_rx.search(chunk.text) if chunk.item == "1" else None
+            if m:
+                quote = chunk.text[:m.end()].split("\n")[-1].strip()  # the sentence, without a heading line
+                if exact_quote(quote, chunk) and distinctive(quote, chunks_for(t)):
+                    headcount[t] = (float(m.group(1).replace(",", "")), quote)
+                break
+    display = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "MU": "Micron", "ADI": "Analog Devices",
+               "MCHP": "Microchip", "AMD": "AMD", "AVGO": "Broadcom", "TXN": "Texas Instruments"}
+    for i, group in enumerate([("AAPL", "NVDA", "MU", "ADI", "MCHP"), ("MSFT", "AMD", "AVGO", "MU", "ADI"),
+                               ("NVDA", "TXN", "AMD", "MCHP", "MSFT")], 1):
+        if not all(t in headcount for t in group):
+            continue
+        names = [display[t] for t in group]
+        largest = max(group, key=lambda t: headcount[t][0])
+        smallest = min(group, key=lambda t: headcount[t][0])
+        q = {
+            "id": f"wxct-{i:03d}", "category": "cross_company",
+            "question": f"How many employees do {', '.join(names[:-1])} and {names[-1]} each report in their latest "
+                        "10-Ks, and which has the largest and which the smallest workforce?",
+            "expected_numbers": [{"value": headcount[t][0], "kind": "count"} for t in group],
+            "key_points": [f"{display[t]}: about {headcount[t][0]:,.0f}" for t in group]
+            + [f"{display[largest]} has the largest workforce and {display[smallest]} the smallest"],
+            "evidence": [{"ticker": t, "quote": headcount[t][1]} for t in group],
+            "should_refuse": False, "companies": sorted(group), "source": "template", "verified": True,
+            "notes": "Headcount sentences taken verbatim from each company's Item 1 (checked).",
+        }
+        out.append(q)
+    for q in out[weak:]:
+        q["tags"] = ["weak_spot"]
+
     TEMPLATES.write_text("".join(json.dumps(q) + "\n" for q in out))
     import collections
     typer.echo(f"Wrote {len(out)} template questions -> {TEMPLATES.name}: "
@@ -669,8 +742,10 @@ def assemble(seed: str = "v2", spot_checks: int = 20) -> None:
     review = json.loads(REVIEW.read_text())
     regression = [json.loads(line) for line in MIGRATED.read_text().splitlines() if line]
     generated = []
-    hard_checked = EVALS / "candidates_v2_hard.checked.jsonl"
-    lines = VERIFIED.read_text().splitlines() + (hard_checked.read_text().splitlines() if hard_checked.exists() else [])
+    lines = VERIFIED.read_text().splitlines()
+    for later in ("candidates_v2_hard.checked.jsonl", "candidates_v2_weak.checked.jsonl"):
+        if (EVALS / later).exists():
+            lines += (EVALS / later).read_text().splitlines()
     for line in lines:
         q = json.loads(line)
         q.pop("word_overlap", None)
