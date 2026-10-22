@@ -87,6 +87,7 @@ class Record(BaseModel):
     # Number grounding (W3): numbers the answer states, and those no tool result supports.
     numbers_stated: int = 0
     unsupported_numbers: list[str] = []
+    unsupported_before_repair: list[str] = []  # flagged by the runtime guard before its repair pass
     error: str = ""
 
 
@@ -191,6 +192,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
         "completion_tokens": r.completion_tokens,
         "truncated": r.truncated,
         "malformed": r.malformed,
+        "unsupported_before_repair": r.unsupported_before_repair,
     }
 
 
@@ -280,6 +282,7 @@ def summarize(records: list[Record]) -> dict:
             sum(len(r.unsupported_numbers) for r in records) / max(1, sum(r.numbers_stated for r in records))
         ),
         "answers_with_unsupported_numbers": _mean([bool(r.unsupported_numbers) for r in records]),
+        "repairs_triggered": sum(bool(r.unsupported_before_repair) for r in records),
     }
     return out
 
@@ -310,6 +313,7 @@ ROWS = [
     ("Answers with invalid citations", "invalid_citation_rate", "pct"),
     ("Unsupported numbers (share of all numbers stated)", "unsupported_number_rate", "pct"),
     ("Answers with any unsupported number", "answers_with_unsupported_numbers", "pct"),
+    ("Grounding repairs triggered", "repairs_triggered", "int"),
     ("Avg prompt tokens", "avg_prompt_tokens", "int"),
     ("Avg completion tokens", "avg_completion_tokens", "int"),
     ("Avg seconds per question", "avg_seconds", "sec"),

@@ -9,8 +9,9 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
-from edgar_rag import companies
+from edgar_rag import companies, config
 from edgar_rag.answer import parse_citations
+from edgar_rag.grounding import check as check_grounding
 from edgar_rag.llm import complete
 from edgar_rag.prompts import AGENT_SYSTEM
 from edgar_rag.tools import TOOLS, Source, Sources
@@ -19,6 +20,13 @@ MAX_STEPS = 6  # LLM calls per question; stops runaway loops
 # Up to this many companies, list them all in the prompt (~15 tokens each). Beyond it the list
 # would cost thousands of tokens on every call, so the agent looks companies up instead.
 LIST_COMPANIES_UP_TO = 50
+
+REPAIR_STEPS = 3  # LLM calls allowed for the one repair pass
+REPAIR_PROMPT = (
+    "These numbers in your answer don't appear in any tool result and can't be recomputed from "
+    "them: {numbers}. Revise the answer: get each number from a tool (use calculate for any "
+    "derived figure) or remove it. Keep the citations and answer the original question."
+)
 
 FINAL_STEP_NUDGE = (
     "You have reached the tool-call limit. Answer the question now using only the tool results "
@@ -48,6 +56,8 @@ class AgentAnswer(BaseModel):
     completion_tokens: int
     truncated: bool = False  # final answer hit max_tokens
     malformed: bool = False  # the model wrote tool-call markup instead of an answer
+    # Numbers the grounding guard flagged in the first answer (empty if none, or guard off).
+    unsupported_before_repair: list[str] = []
 
 
 def available_companies() -> str:
@@ -81,20 +91,15 @@ def run_tool(name: str, raw_args: str, sources: Sources) -> tuple[dict, str, boo
     return args_dict, result, result.startswith("ERROR")
 
 
-def ask(question: str) -> AgentAnswer:
-    sources = Sources()
-    tool_calls: list[ToolCall] = []
-    schemas = [t.schema_for_llm() for t in TOOLS.values()]
-    messages: list[dict] = [
-        {"role": "system", "content": AGENT_SYSTEM.format(companies=available_companies())},
-        {"role": "user", "content": question},
-    ]
+def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_calls: list[ToolCall],
+          max_steps: int, first_step: int = 1) -> tuple[str, bool, int, int, int]:
+    """Call the LLM and run the tools it asks for, until it answers or hits max_steps.
+    Returns (text, truncated, last step number, prompt tokens, completion tokens)."""
     prompt_tokens = completion_tokens = 0
-    text = ""
-    truncated = False
-
-    for step in range(1, MAX_STEPS + 1):
-        last = step == MAX_STEPS
+    text, truncated, step = "", False, first_step
+    for i in range(max_steps):
+        step = first_step + i
+        last = i == max_steps - 1
         if last:
             # Force an answer. Removing the tools entirely made the model write tool calls out
             # as text (seen in evals), so keep them listed but disallow calling them.
@@ -127,6 +132,35 @@ def ask(question: str) -> AgentAnswer:
                 ToolCall(step=step, name=tc.function.name, arguments=args, result=result, error=error)
             )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+    return text, truncated, step, prompt_tokens, completion_tokens
+
+
+def ask(question: str) -> AgentAnswer:
+    sources = Sources()
+    tool_calls: list[ToolCall] = []
+    schemas = [t.schema_for_llm() for t in TOOLS.values()]
+    messages: list[dict] = [
+        {"role": "system", "content": AGENT_SYSTEM.format(companies=available_companies())},
+        {"role": "user", "content": question},
+    ]
+    text, truncated, step, prompt_tokens, completion_tokens = _loop(messages, schemas, sources, tool_calls, MAX_STEPS)
+
+    # Number grounding guard (W3): if the answer states numbers no tool result supports, give the
+    # model one repair pass, with tools, to source or remove them.
+    unsupported_before: list[str] = []
+    if config.grounding_guard() == "on" and text and not TOOL_MARKUP_RE.search(text):
+        report = check_grounding(text, "\n".join(c.result for c in tool_calls), question)
+        unsupported_before = [c.raw for c in report.unsupported]
+        if unsupported_before:
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": REPAIR_PROMPT.format(numbers=", ".join(unsupported_before))})
+            repaired, truncated, step, p_tok, c_tok = _loop(
+                messages, schemas, sources, tool_calls, REPAIR_STEPS, first_step=step + 1
+            )
+            prompt_tokens += p_tok
+            completion_tokens += c_tok
+            if repaired:
+                text = repaired
 
     # Never show the user raw tool-call markup; report it instead.
     malformed = bool(TOOL_MARKUP_RE.search(text))
@@ -149,4 +183,5 @@ def ask(question: str) -> AgentAnswer:
         completion_tokens=completion_tokens,
         truncated=truncated,
         malformed=malformed,
+        unsupported_before_repair=unsupported_before,
     )

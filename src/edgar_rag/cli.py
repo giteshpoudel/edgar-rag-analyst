@@ -174,6 +174,8 @@ def run_eval(
     retrieval = config.retrieval_mode() + ("+" + config.reranker() if config.reranker() != "none" else "")
     if retrieval != "hybrid":  # the default since W2; v1-style results are tagged "_vector"
         tag += f"_{retrieval}"
+    if config.grounding_guard() == "off":  # the guard is on by default since W3
+        tag += "_noguard"
     typer.echo(f"Retrieval: {retrieval}")
     if repeat > 1:
         _repeat_runs(modes, items, workers, repeat, out_dir, tag)

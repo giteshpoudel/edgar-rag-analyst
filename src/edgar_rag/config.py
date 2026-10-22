@@ -76,6 +76,11 @@ def reranker() -> str:
     return _choice("RERANKER", "none", RERANKERS)
 
 
+def grounding_guard() -> str:
+    """on: if an answer states numbers no tool result supports, the agent gets one repair pass."""
+    return _choice("GROUNDING_GUARD", "on", ("on", "off"))
+
+
 def rerank_candidates() -> int:
     """How many first-stage results the reranker re-orders."""
     return int(os.getenv("RERANK_CANDIDATES", "30"))
