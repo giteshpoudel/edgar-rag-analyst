@@ -84,3 +84,31 @@ def grounding_guard() -> str:
 def rerank_candidates() -> int:
     """How many first-stage results the reranker re-orders."""
     return int(os.getenv("RERANK_CANDIDATES", "30"))
+
+
+# --- Tracing and cost (W4) ------------------------------------------------------------------
+
+# USD per 1M tokens: (input cache hit, input cache miss, output). From
+# https://api-docs.deepseek.com/quick_start/pricing (checked 2026-10-22). DeepSeek charges half
+# these rates off-peak; reports use the full (peak) rate so runs at different hours compare.
+# Reasoning tokens are part of completion_tokens and billed as output.
+PRICES: dict[str, tuple[float, float, float]] = {
+    "deepseek-flash": (0.006, 0.30, 1.20),
+    "deepseek-v4-pro": (0.044, 1.32, 3.96),
+}
+
+
+def price(model: str) -> tuple[float, float, float] | None:
+    """Per-1M-token prices for a model, or None if it isn't in the table (cost is then unknown,
+    never silently zero)."""
+    return PRICES.get(model)
+
+
+def tracing() -> str:
+    """off: spans are still recorded in-process (eval cost and latency come from them) but not
+    exported. phoenix: also send them to a Phoenix server (PHOENIX_ENDPOINT)."""
+    return _choice("TRACING", "off", ("off", "phoenix"))
+
+
+def phoenix_endpoint() -> str:
+    return os.getenv("PHOENIX_ENDPOINT", "http://localhost:6006/v1/traces")

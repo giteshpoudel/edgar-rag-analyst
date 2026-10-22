@@ -5,7 +5,7 @@ from functools import lru_cache
 from openai import OpenAI
 from pydantic import BaseModel
 
-from edgar_rag import config
+from edgar_rag import config, tracing
 
 
 class LlmResponse(BaseModel):
@@ -29,18 +29,26 @@ def complete(
     max_tokens: int = 4000,
     model: str | None = None,
     tool_choice: str | None = None,
+    span_name: str = "llm",
 ):
-    """One raw API call, optionally offering tools. Returns the SDK response object."""
+    """One raw API call, optionally offering tools, recorded as an LLM span (tokens, cost,
+    latency). Returns the SDK response object."""
+    model = model or config.llm_model()
     kwargs: dict = {"tools": tools} if tools else {}
     if tools and tool_choice:
         kwargs["tool_choice"] = tool_choice
-    return _client().chat.completions.create(
-        model=model or config.llm_model(),
-        messages=messages,
-        temperature=0,
-        max_tokens=max_tokens,
-        **kwargs,
-    )
+    params = {"temperature": 0, "max_tokens": max_tokens, "tool_choice": tool_choice,
+              "tools": [t["function"]["name"] for t in tools or []]}
+    with tracing.span(span_name, "LLM") as span:
+        response = _client().chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        tracing.record_llm(span, model, messages, response, params)
+    return response
 
 
 def chat(messages: list[dict], max_tokens: int = 4000) -> LlmResponse:

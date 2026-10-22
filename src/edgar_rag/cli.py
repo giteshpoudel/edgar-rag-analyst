@@ -110,10 +110,33 @@ def ask(
     item: str | None = typer.Option(None, help="(--simple) Only this section, e.g. 1A"),
 ) -> None:
     """Answer QUESTION from the filings, with citations."""
-    if simple:
-        _ask_simple(question, k, ticker, item)
-        return
+    import time
 
+    from edgar_rag import tracing
+
+    start = time.monotonic()
+    with tracing.span("ask", "CHAIN", **{"input.value": question, "edgar.simple": simple}):
+        trace_id = tracing.current_trace_id()
+        if simple:
+            _ask_simple(question, k, ticker, item)
+        else:
+            _ask_agent(question)
+    _print_usage(tracing.COLLECTOR.pop(trace_id), time.monotonic() - start, tracing.trace_id_hex(trace_id))
+
+
+def _print_usage(usage, seconds: float, trace_id: str) -> None:
+    cost = f"${usage.cost_usd:.4f}" if usage.cost_known else "cost unknown (model not in price table)"
+    llm = usage.seconds.get("LLM", 0.0)
+    typer.echo(
+        f"\n{usage.llm_calls} LLM calls · {usage.prompt_tokens:,} prompt ({usage.cached_prompt_tokens:,} cached) + "
+        f"{usage.completion_tokens:,} completion tokens ({usage.reasoning_tokens:,} reasoning)"
+    )
+    typer.echo(f"{cost} at list price · {seconds:.1f} s total, {llm:.1f} s in LLM calls")
+    if config.tracing() == "phoenix":
+        typer.echo(f"Trace {trace_id} in Phoenix ({config.phoenix_endpoint().removesuffix('/v1/traces')})")
+
+
+def _ask_agent(question: str) -> None:
     from edgar_rag.agent import ask as run_agent
 
     result = run_agent(question)
@@ -134,10 +157,6 @@ def ask(
     typer.echo("  (* = cited in the answer)")
     if result.invalid_citations:
         typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
-    typer.echo(
-        f"\n{result.steps} LLM calls · {result.prompt_tokens} prompt + "
-        f"{result.completion_tokens} completion tokens"
-    )
 
 
 def _load_items(golden: str, split: str | None, only: str | None):
@@ -157,7 +176,7 @@ def _load_items(golden: str, split: str | None, only: str | None):
 @app.command(name="eval")
 def run_eval(
     mode: str = typer.Option("both", help="agent, simple, or both"),
-    golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (154)"),
+    golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (198)"),
     split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
     only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
     workers: int = typer.Option(4, help="Questions answered in parallel"),
@@ -205,19 +224,22 @@ def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
     from edgar_rag.stats import summarize_runs
 
     for m in modes:
-        runs = []
+        runs, pooled = [], []
         for k in range(1, repeat + 1):
             typer.echo(f"{m} run {k}/{repeat}: {len(items)} questions...")
             records = evaluation.run(m, items, workers=workers)
             evaluation.save(records, m, out_dir, f"{tag}_run{k}")
             runs.append([json.loads(r.model_dump_json()) for r in records])
-            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed")
+            pooled += records
+            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · {evaluation.cost_line(records)}")
         s = summarize_runs(runs)
         typer.echo(
             f"{m}: mean {s.mean:.1%} (range {s.low:.1%}-{s.high:.1%}) over {s.runs} runs; "
             f"{s.flip_rate:.1%} of questions changed result between runs"
         )
-        (out_dir / f"{m}{tag}_runs.json").write_text(s.model_dump_json(indent=2))
+        typer.echo(f"  all runs: {evaluation.cost_line(pooled)}")
+        report = {**s.model_dump(), **evaluation.cost_and_latency(pooled)}
+        (out_dir / f"{m}{tag}_runs.json").write_text(json.dumps(report, indent=2))
 
 
 @app.command()
@@ -249,8 +271,10 @@ def compare(
     runs_b, files_b = load(b)
     for name, runs, files in (("A", runs_a, files_a), ("B", runs_b, files_b)):
         s = summarize_runs(runs)
+        records = [evaluation.Record.model_validate(r) for run in runs for r in run]
         typer.echo(f"{name}: {', '.join(f.name for f in files)}: mean {s.mean:.1%} "
-                   f"(range {s.low:.1%}-{s.high:.1%}), flip rate {s.flip_rate:.1%}")
+                   f"(range {s.low:.1%}-{s.high:.1%}), flip rate {s.flip_rate:.1%} · "
+                   f"{evaluation.cost_line(records)}")
     c = paired_bootstrap(runs_a, runs_b)
     verdict = "significant" if c.significant else "not significant (could be noise)"
     typer.echo(f"B - A = {c.diff:+.1%}, 95% CI [{c.ci_low:+.1%}, {c.ci_high:+.1%}] over {c.questions} questions: {verdict}")
@@ -341,10 +365,6 @@ def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> 
     typer.echo("  (* = cited in the answer)")
     if result.invalid_citations:
         typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
-    typer.echo(
-        f"\n{result.llm.model} · {result.llm.prompt_tokens} prompt + "
-        f"{result.llm.completion_tokens} completion tokens"
-    )
 
 
 if __name__ == "__main__":

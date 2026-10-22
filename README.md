@@ -79,6 +79,34 @@ flowchart LR
 
 Full results per question are in [evals/results/](evals/results/). Run `edgar eval` to reproduce them. Results vary by a question or two between runs (one borderline narrative question passes in some runs and fails in others).
 
+## Tracing and cost
+
+Every question is recorded as an OpenTelemetry trace ([tracing.py](src/edgar_rag/tracing.py)): one span each for the agent, every LLM call (messages, tokens, cost), every tool call, retrieval (the passages returned, with scores), query embedding and the judge. Attribute names follow [OpenInference](https://github.com/Arize-ai/openinference), so [Arize Phoenix](https://github.com/Arize-ai/phoenix) shows them as a readable tree. Eval reports take cost and latency from the same spans, and each result row stores its `trace_id`.
+
+v2 dev + test set (140 questions), agent with hybrid search, one run:
+
+| Metric | Value |
+|---|---|
+| Pass rate | 96% (135/140) |
+| **Cost per question** | **$0.0012** ($1.23 per 1,000 questions) |
+| Judge cost per question (eval only) | $0.0009 |
+| Latency p50 / p95 | 3.7 s / 8.9 s |
+| LLM calls per question | 2.5 |
+| Share of time in LLM calls / retrieval | 94% / 5% |
+| Prompt tokens served from DeepSeek's cache | 73% |
+
+Costs use DeepSeek's list (peak) prices from the table in [config.py](src/edgar_rag/config.py); off-peak calls cost half. Most prompt tokens are the repeated system prompt and tool definitions, which DeepSeek bills at the cache-hit rate (50× cheaper than uncached input). That is why a multi-call agent costs about a tenth of a cent per question. The most expensive question (a five-call cross-company comparison) cost $0.0046.
+
+To view traces, run Phoenix in its own environment, then set `TRACING=phoenix`:
+
+```bash
+python3 -m venv ~/.venvs/phoenix && ~/.venvs/phoenix/bin/pip install arize-phoenix
+~/.venvs/phoenix/bin/phoenix serve          # UI at http://localhost:6006
+TRACING=phoenix edgar ask "How did NVIDIA's revenue change in fiscal 2025?"
+```
+
+`edgar ask` prints each answer's tokens, cost, time and trace id. With `TRACING=off` (the default) spans are still recorded in-process for the cost figures, just not exported.
+
 ## Scaling: the semiconductor pilot
 
 Adding 13 semiconductor companies tested whether the pipeline generalizes. `edgar ingest` runs download → chunk → index for a list of tickers and prints a **health report** per filing, because nobody reads 13 (or 500) filings by hand:
@@ -167,7 +195,9 @@ src/edgar_rag/
   prompts.py      system prompts
   scoring.py      number matching, retrieval metrics, LLM judge
   evaluation.py   eval runner and summary
+  tracing.py      OpenTelemetry spans, token and cost accounting
   cli.py          `edgar` command
+tests/            offline unit tests (no API key needed)
 evals/
   golden.jsonl    58 labelled questions
   results/        per-question results and summary from the last run

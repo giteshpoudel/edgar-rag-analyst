@@ -9,7 +9,7 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
-from edgar_rag import companies, config
+from edgar_rag import companies, config, tracing
 from edgar_rag.answer import parse_citations
 from edgar_rag.grounding import check as check_grounding
 from edgar_rag.llm import complete
@@ -127,7 +127,14 @@ def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_call
         messages.append(assistant)
 
         for tc in message.tool_calls:
-            args, result, error = run_tool(tc.function.name, tc.function.arguments, sources)
+            with tracing.span(f"tool.{tc.function.name}", "TOOL", **{
+                "tool.name": tc.function.name, "input.value": tc.function.arguments,
+                "edgar.step": step,
+            }) as span:
+                args, result, error = run_tool(tc.function.name, tc.function.arguments, sources)
+                tracing.set_attributes(span, {"tool.parameters": args, "output.value": result})
+                if error:
+                    tracing.mark_error(span, result[:200])
             tool_calls.append(
                 ToolCall(step=step, name=tc.function.name, arguments=args, result=result, error=error)
             )
@@ -136,6 +143,17 @@ def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_call
 
 
 def ask(question: str) -> AgentAnswer:
+    with tracing.span("agent", "AGENT", **{"input.value": question}) as span:
+        result = _ask(question)
+        tracing.set_attributes(span, {
+            "output.value": result.text, "edgar.steps": result.steps,
+            "edgar.tool_calls": len(result.tool_calls), "edgar.malformed": result.malformed,
+            "edgar.repaired": bool(result.unsupported_before_repair),
+        })
+        return result
+
+
+def _ask(question: str) -> AgentAnswer:
     sources = Sources()
     tool_calls: list[ToolCall] = []
     schemas = [t.schema_for_llm() for t in TOOLS.values()]
@@ -149,8 +167,11 @@ def ask(question: str) -> AgentAnswer:
     # model one repair pass, with tools, to source or remove them.
     unsupported_before: list[str] = []
     if config.grounding_guard() == "on" and text and not TOOL_MARKUP_RE.search(text):
-        report = check_grounding(text, "\n".join(c.result for c in tool_calls), question)
-        unsupported_before = [c.raw for c in report.unsupported]
+        with tracing.span("grounding.check", "CHAIN", **{"input.value": text}) as span:
+            report = check_grounding(text, "\n".join(c.result for c in tool_calls), question)
+            unsupported_before = [c.raw for c in report.unsupported]
+            tracing.set_attributes(span, {"edgar.numbers_stated": len(report.claims),
+                                          "edgar.unsupported": unsupported_before})
         if unsupported_before:
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": REPAIR_PROMPT.format(numbers=", ".join(unsupported_before))})

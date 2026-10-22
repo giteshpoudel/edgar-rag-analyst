@@ -1,8 +1,11 @@
 """Local embedding model (runs on CPU, no API needed)."""
 
 import threading
+import time
 
 import numpy as np
+
+from edgar_rag import tracing
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"  # 384-dimensional vectors, max 512 tokens
 
@@ -40,5 +43,9 @@ def embed_documents(texts: list[str]) -> np.ndarray:
 
 
 def embed_query(question: str) -> np.ndarray:
-    with _lock:
-        return _model().encode(QUERY_PREFIX + question, normalize_embeddings=True)
+    with tracing.span("embed_query", "EMBEDDING", **{"embedding.model_name": MODEL_NAME}) as span:
+        waited = time.monotonic()
+        with _lock:
+            # Time queued behind another thread's model call, apart from the model's own time.
+            span.set_attribute("edgar.lock_wait_ms", round((time.monotonic() - waited) * 1000, 1))
+            return _model().encode(QUERY_PREFIX + question, normalize_embeddings=True)

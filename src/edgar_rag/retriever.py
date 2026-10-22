@@ -11,7 +11,7 @@ the agent's tools don't change when the retrieval setup does.
 
 from pydantic import BaseModel
 
-from edgar_rag import config
+from edgar_rag import config, tracing
 from edgar_rag.chunking import Chunk
 from edgar_rag.embeddings import embed_query
 from edgar_rag.index import TABLE_NAME, connect
@@ -82,9 +82,26 @@ def search(
     reranker: str | None = None,
     candidates: int | None = None,
 ) -> list[SearchResult]:
-    """Return the k most relevant chunks for the question."""
+    """Return the k most relevant chunks for the question (recorded as a RETRIEVER span)."""
     mode = mode or config.retrieval_mode()
     reranker = reranker or config.reranker()
+    with tracing.span("retrieve", "RETRIEVER", **{
+        "input.value": question, "edgar.mode": mode, "edgar.reranker": reranker, "edgar.k": k,
+        "edgar.ticker": ticker, "edgar.item": item,
+    }) as span:
+        results = _search(question, k, ticker, item, mode, reranker, candidates)
+        attrs = {}
+        for i, r in enumerate(results):
+            p = f"retrieval.documents.{i}.document"
+            attrs.update({f"{p}.id": r.chunk.chunk_id, f"{p}.content": r.chunk.text,
+                          f"{p}.score": float(r.score),
+                          f"{p}.metadata": {"ticker": r.chunk.ticker, "item": r.chunk.item}})
+        tracing.set_attributes(span, attrs)
+        return results
+
+
+def _search(question: str, k: int, ticker: str | None, item: str | None, mode: str,
+            reranker: str, candidates: int | None) -> list[SearchResult]:
     use_reranker = reranker != "none"
     # The first stage fetches more than k when a reranker will choose among them.
     n = max(k, candidates or config.rerank_candidates()) if use_reranker else k

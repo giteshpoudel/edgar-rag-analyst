@@ -162,6 +162,7 @@ def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
         [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
         max_tokens=4000,
         model=config.judge_model(),
+        span_name="judge",  # kept apart from the system's cost in reports
     )
     choice = response.choices[0]
     raw = (choice.message.content or "").strip()

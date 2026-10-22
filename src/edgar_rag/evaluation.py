@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from edgar_rag import tracing
 from edgar_rag.scoring import (
     Evidence,
     Expected,
@@ -88,6 +89,15 @@ class Record(BaseModel):
     numbers_stated: int = 0
     unsupported_numbers: list[str] = []
     unsupported_before_repair: list[str] = []  # flagged by the runtime guard before its repair pass
+    # Tracing and cost (W4), totalled from this question's spans. None in runs from before W4.
+    trace_id: str = ""  # open the full trace in Phoenix by this id
+    cost_usd: float | None = None  # the system's LLM calls, at list (peak) prices
+    judge_cost_usd: float | None = None  # grading cost, reported separately
+    llm_calls: int = 0
+    cached_prompt_tokens: int = 0
+    reasoning_tokens: int = 0
+    llm_seconds: float | None = None  # time inside LLM calls (the rest is tools and overhead)
+    retrieval_seconds: float | None = None
     error: str = ""
 
 
@@ -197,6 +207,31 @@ def _run_mode(question: str, mode: Mode) -> dict:
 
 
 def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
+    """Answer and score one question inside a root span, so the whole run (answer, tools,
+    retrieval, judge) is one trace; then attach that trace's cost and timing to the record."""
+    with tracing.span("eval.question", "CHAIN", **{
+        "input.value": item.question, "edgar.eval.id": item.id,
+        "edgar.eval.category": item.category, "edgar.eval.mode": mode,
+    }) as span:
+        trace_id = tracing.current_trace_id()
+        record = _evaluate(item, mode)
+        tracing.set_attributes(span, {"output.value": record.answer, "edgar.eval.passed": record.passed})
+        if record.error:
+            tracing.mark_error(span, record.error)
+    usage = tracing.COLLECTOR.pop(trace_id)  # complete now: the root span has ended
+    return record.model_copy(update={
+        "trace_id": tracing.trace_id_hex(trace_id),
+        "cost_usd": round(usage.cost_usd, 6) if usage.cost_known else None,
+        "judge_cost_usd": round(usage.judge_cost_usd, 6),
+        "llm_calls": usage.llm_calls,
+        "cached_prompt_tokens": usage.cached_prompt_tokens,
+        "reasoning_tokens": usage.reasoning_tokens,
+        "llm_seconds": round(usage.seconds.get("LLM", 0.0), 2),
+        "retrieval_seconds": round(usage.seconds.get("RETRIEVER", 0.0), 2),
+    })
+
+
+def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     start = time.monotonic()
     try:
         out = _run_mode(item.question, mode)
@@ -283,8 +318,49 @@ def summarize(records: list[Record]) -> dict:
         ),
         "answers_with_unsupported_numbers": _mean([bool(r.unsupported_numbers) for r in records]),
         "repairs_triggered": sum(bool(r.unsupported_before_repair) for r in records),
+        **cost_and_latency(records),
     }
     return out
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    """q-th percentile (0-100) with linear interpolation between ranks."""
+    if not values:
+        return None
+    s = sorted(values)
+    pos = (len(s) - 1) * q / 100
+    lo = int(pos)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
+
+
+def cost_and_latency(records: list[Record]) -> dict:
+    """Cost per question and latency percentiles (W4). Cost is None when any record lacks it
+    (runs from before W4, or a model missing from the price table), never a partial sum."""
+    costs = [r.cost_usd for r in records]
+    known = bool(records) and all(c is not None for c in costs)
+    traced = [r for r in records if r.llm_seconds is not None]
+    total = sum(r.seconds for r in traced)
+    return {
+        "cost_per_question": _mean(costs) if known else None,
+        "cost_per_1000_questions": _mean(costs) * 1000 if known else None,
+        "judge_cost_per_question": _mean([r.judge_cost_usd for r in traced]) if traced else None,
+        "avg_llm_calls": _mean([r.llm_calls for r in traced]) if traced else None,
+        "cache_hit_share": (sum(r.cached_prompt_tokens for r in traced) / max(1, sum(r.prompt_tokens for r in traced))
+                            if traced else None),
+        "p50_seconds": percentile([r.seconds for r in records], 50),
+        "p95_seconds": percentile([r.seconds for r in records], 95),
+        "llm_time_share": sum(r.llm_seconds for r in traced) / total if traced and total else None,
+        "retrieval_time_share": sum(r.retrieval_seconds for r in traced) / total if traced and total else None,
+    }
+
+
+def cost_line(records: list[Record]) -> str:
+    """One line for terminal reports, e.g. "$0.0011/question · p50 7.2 s · p95 16.0 s"."""
+    s = cost_and_latency(records)
+    cost = f"${s['cost_per_question']:.4f}/question" if s["cost_per_question"] is not None else "cost n/a (run predates W4)"
+    p50, p95 = s["p50_seconds"], s["p95_seconds"]
+    return f"{cost} · p50 {p50:.1f} s · p95 {p95:.1f} s" if p50 is not None else cost
 
 
 ROWS = [
@@ -317,6 +393,15 @@ ROWS = [
     ("Avg prompt tokens", "avg_prompt_tokens", "int"),
     ("Avg completion tokens", "avg_completion_tokens", "int"),
     ("Avg seconds per question", "avg_seconds", "sec"),
+    ("p50 seconds per question", "p50_seconds", "sec"),
+    ("p95 seconds per question", "p95_seconds", "sec"),
+    ("Share of answer time in LLM calls", "llm_time_share", "pct"),
+    ("Share of answer time in retrieval", "retrieval_time_share", "pct"),
+    ("Avg LLM calls per question", "avg_llm_calls", "num"),
+    ("Prompt tokens served from cache", "cache_hit_share", "pct"),
+    ("Cost per question (USD, list price)", "cost_per_question", "usd"),
+    ("Cost per 1,000 questions (USD)", "cost_per_1000_questions", "usd2"),
+    ("Judge cost per question (USD, eval only)", "judge_cost_per_question", "usd"),
     ("Truncated answers (hit token limit)", "truncated_answers", "int"),
     ("Malformed answers (tool-call markup)", "malformed_answers", "int"),
     ("Judge errors (no usable verdict)", "judge_errors", "int"),
@@ -327,7 +412,8 @@ ROWS = [
 def _fmt(value: float | None, style: str) -> str:
     if value is None:
         return "n/a"
-    return {"pct": f"{value:.0%}", "num": f"{value:.2f}", "int": f"{value:,.0f}", "sec": f"{value:.1f}"}[style]
+    return {"pct": f"{value:.0%}", "num": f"{value:.2f}", "int": f"{value:,.0f}", "sec": f"{value:.1f}",
+            "usd": f"${value:.4f}", "usd2": f"${value:,.2f}"}[style]
 
 
 def summary_markdown(summaries: dict[str, dict], model: str, judge: str) -> str:

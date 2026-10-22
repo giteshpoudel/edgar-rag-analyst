@@ -7,7 +7,9 @@ run per pair. So it only re-orders the top few dozen candidates from the fast fi
 """
 
 import os
+import time
 
+from edgar_rag import tracing
 from edgar_rag.embeddings import MODEL_LOCK
 
 MODELS = {
@@ -34,6 +36,11 @@ def rerank_scores(name: str, question: str, passages: list[str]) -> list[float]:
     """Relevance score for each passage (higher = more relevant); same order as the input."""
     if not passages:
         return []
-    with _lock:
-        scores = _model(name).predict([(question, p) for p in passages], batch_size=16, show_progress_bar=False)
+    with tracing.span("rerank", "RERANKER", **{"reranker.model_name": MODELS.get(name, name),
+                                               "reranker.query": question,
+                                               "edgar.candidates": len(passages)}) as span:
+        waited = time.monotonic()
+        with _lock:
+            span.set_attribute("edgar.lock_wait_ms", round((time.monotonic() - waited) * 1000, 1))
+            scores = _model(name).predict([(question, p) for p in passages], batch_size=16, show_progress_bar=False)
     return [float(s) for s in scores]
