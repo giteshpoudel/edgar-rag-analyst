@@ -63,7 +63,13 @@ class Comparison(BaseModel):
 def paired_bootstrap(runs_a: list[list[dict]], runs_b: list[list[dict]], iterations: int = 10_000,
                      seed: int = 0) -> Comparison:
     """95% CI for (pass rate of B) - (pass rate of A), over the questions both configs answered."""
-    a, b = per_question_rate(runs_a), per_question_rate(runs_b)
+    return bootstrap_scores(per_question_rate(runs_a), per_question_rate(runs_b), iterations, seed)
+
+
+def bootstrap_scores(a: dict[str, float], b: dict[str, float], iterations: int = 10_000,
+                     seed: int = 0) -> Comparison:
+    """95% CI for mean(B) - mean(A) over shared question ids, for any per-question score
+    (pass rate, recall@5, reciprocal rank...)."""
     ids = sorted(set(a) & set(b))
     diffs = [b[i] - a[i] for i in ids]
     rng = random.Random(seed)

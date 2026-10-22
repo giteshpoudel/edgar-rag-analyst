@@ -170,6 +170,11 @@ def run_eval(
     modes = ["agent", "simple"] if mode == "both" else [mode]
     out_dir = evaluation.results_dir(golden)
     tag = f"_{split.replace(',', '+')}" if split else ""
+    # Name results after a non-default retrieval config, so runs never overwrite the baseline.
+    retrieval = config.retrieval_mode() + ("+" + config.reranker() if config.reranker() != "none" else "")
+    if retrieval != "vector":
+        tag += f"_{retrieval}"
+    typer.echo(f"Retrieval: {retrieval}")
     if repeat > 1:
         _repeat_runs(modes, items, workers, repeat, out_dir, tag)
         return
@@ -270,10 +275,13 @@ def run_retrieval_eval(
         xs = sorted(xs)
         return xs[min(len(xs) - 1, int(q * len(xs)))]
 
-    rows = []
+    from edgar_rag.stats import bootstrap_scores
+
+    rows, per_config = [], {}
     for cfg in [c.strip() for c in configs.split(",") if c.strip()]:
         mode, _, reranker = cfg.partition("+")
         recs = evaluation.retrieval_eval(items, mode=mode, reranker=reranker or "none")
+        per_config[cfg] = recs
         if not recs:
             typer.echo("No questions with evidence quotes in this selection.")
             return
@@ -294,6 +302,21 @@ def run_retrieval_eval(
              "| Config | R@5 | R@10 | R@20 | MRR | p50 ms | p95 ms |", "|---|---|---|---|---|---|---|"]
     for cfg, _, r5, r10, r20, mrr, p50, p95 in rows:
         lines.append(f"| {cfg} | {r5:.3f} | {r10:.3f} | {r20:.3f} | {mrr:.3f} | {p50:.0f} | {p95:.0f} |")
+    # Paired bootstrap CIs against the first config (the baseline), per question.
+    base_name = rows[0][0]
+    base = per_config[base_name]
+    lines += ["", f"Change vs {base_name} (paired bootstrap 95% CI over questions):", "",
+              "| Config | ΔR@5 | ΔMRR |", "|---|---|---|"]
+    for cfg, recs in list(per_config.items())[1:]:
+        cells = []
+        for key in ("r5", "mrr"):
+            def score(rs, key=key):
+                return {r.id: (r.recall[5] if key == "r5" else r.reciprocal_rank) for r in rs}
+            c = bootstrap_scores(score(base), score(recs))
+            mark = " *" if c.significant else ""
+            cells.append(f"{c.diff:+.3f} [{c.ci_low:+.3f}, {c.ci_high:+.3f}]{mark}")
+        lines.append(f"| {cfg} | {cells[0]} | {cells[1]} |")
+    lines += ["", "* = the CI excludes 0"]
     table = "\n".join(lines) + "\n"
     out = evaluation.results_dir(golden) / f"retrieval_{(split or 'all').replace(',', '+')}.md"
     out.write_text(table)
