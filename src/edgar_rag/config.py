@@ -46,7 +46,10 @@ def data_dir() -> Path:
     return Path(os.getenv("DATA_DIR", "data"))
 
 
-# --- Retrieval (W2). Defaults keep v1 behaviour until the ablation picks a winner. ---------
+# --- Retrieval (W2). Defaults chosen by the ablation (evals/results/v2/retrieval_test.md):
+# hybrid beat vector by +0.23 recall@5 and +4.0 points end-to-end on test (both significant);
+# the bge reranker added no accuracy over hybrid (+0.0, CI [-1.1, +1.1]) for +1.7 s p50, so it
+# stays off by default.
 
 
 RETRIEVAL_MODES = ("vector", "keyword", "hybrid")
@@ -65,7 +68,7 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
 
 def retrieval_mode() -> str:
     """vector (meaning), keyword (BM25 full-text) or hybrid (both, fused by reciprocal rank)."""
-    return _choice("RETRIEVAL_MODE", "vector", RETRIEVAL_MODES)
+    return _choice("RETRIEVAL_MODE", "hybrid", RETRIEVAL_MODES)
 
 
 def reranker() -> str:

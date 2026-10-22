@@ -172,7 +172,7 @@ def run_eval(
     tag = f"_{split.replace(',', '+')}" if split else ""
     # Name results after a non-default retrieval config, so runs never overwrite the baseline.
     retrieval = config.retrieval_mode() + ("+" + config.reranker() if config.reranker() != "none" else "")
-    if retrieval != "vector":
+    if retrieval != "hybrid":  # the default since W2; v1-style results are tagged "_vector"
         tag += f"_{retrieval}"
     typer.echo(f"Retrieval: {retrieval}")
     if repeat > 1:
