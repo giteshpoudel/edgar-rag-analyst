@@ -84,6 +84,9 @@ class Record(BaseModel):
     # (None when the question has no evidence). Separates "never found it" from "found it,
     # answered wrong".
     evidence_seen: float | None = None
+    # Number grounding (W3): numbers the answer states, and those no tool result supports.
+    numbers_stated: int = 0
+    unsupported_numbers: list[str] = []
     error: str = ""
 
 
@@ -165,6 +168,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
             "answer": r.text,
             "tools_used": ["search"],
             "chunk_ids": [s.chunk.chunk_id for s in r.sources],
+            "sources_text": "\n".join(s.chunk.text for s in r.sources),
             "retrieved_items": [s.chunk.item for s in r.sources],
             "top_score": max((s.score for s in r.sources), default=None),
             "invalid_citations": r.invalid_citations,
@@ -179,6 +183,7 @@ def _run_mode(question: str, mode: Mode) -> dict:
         "answer": r.text,
         "tools_used": [c.name for c in r.tool_calls],
         "chunk_ids": [s.ref for s in r.sources if s.kind == "filing"],
+        "sources_text": "\n".join(c.result for c in r.tool_calls),
         "retrieved_items": [_item_from_chunk_id(s.ref) for s in r.sources if s.kind == "filing"],
         "top_score": max((s.score for s in r.sources if s.score is not None), default=None),
         "invalid_citations": r.invalid_citations,
@@ -197,12 +202,16 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
     except Exception as e:  # noqa: BLE001 - one failure shouldn't stop the run; it's scored as a fail
         out = {"answer": "", "tools_used": [], "retrieved_items": [], "invalid_citations": [],
                "prompt_tokens": 0, "completion_tokens": 0, "truncated": False, "top_score": None,
-               "chunk_ids": []}
+               "chunk_ids": [], "sources_text": ""}
         error = f"{type(e).__name__}: {e}"
     seconds = time.monotonic() - start
 
     seen = _evidence_seen(out.pop("chunk_ids"), item.evidence)
+    sources_text = out.pop("sources_text")
     answer = out["answer"]
+    from edgar_rag.grounding import check as ground
+
+    grounding = ground(answer, sources_text, item.question)
     numbers = [number_found(e, answer) for e in item.expected_numbers]
     hit, rr = (None, None)
     if item.expected_items:
@@ -221,7 +230,9 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
         id=item.id, category=item.category, mode=mode, question=item.question, **out,
         seconds=round(seconds, 1), numbers_found=numbers, retrieval_hit=hit,
         reciprocal_rank=rr, key_points_covered=covered, refused=refused, passed=passed,
-        judge_error=verdict.error if verdict else "", evidence_seen=seen, error=error,
+        judge_error=verdict.error if verdict else "", evidence_seen=seen,
+        numbers_stated=len(grounding.claims), unsupported_numbers=[c.raw for c in grounding.unsupported],
+        error=error,
     )
 
 
@@ -265,6 +276,10 @@ def summarize(records: list[Record]) -> dict:
         "malformed_answers": sum(r.malformed for r in records),
         "judge_errors": sum(bool(r.judge_error) for r in records),
         "evidence_seen": _mean([r.evidence_seen for r in records if r.evidence_seen is not None]),
+        "unsupported_number_rate": (
+            sum(len(r.unsupported_numbers) for r in records) / max(1, sum(r.numbers_stated for r in records))
+        ),
+        "answers_with_unsupported_numbers": _mean([bool(r.unsupported_numbers) for r in records]),
     }
     return out
 
@@ -293,6 +308,8 @@ ROWS = [
     ("Key-point coverage (LLM judge)", "key_point_coverage", "pct"),
     ("False refusals on answerable questions", "false_refusal_rate", "pct"),
     ("Answers with invalid citations", "invalid_citation_rate", "pct"),
+    ("Unsupported numbers (share of all numbers stated)", "unsupported_number_rate", "pct"),
+    ("Answers with any unsupported number", "answers_with_unsupported_numbers", "pct"),
     ("Avg prompt tokens", "avg_prompt_tokens", "int"),
     ("Avg completion tokens", "avg_completion_tokens", "int"),
     ("Avg seconds per question", "avg_seconds", "sec"),
