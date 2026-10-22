@@ -253,31 +253,51 @@ def compare(
 def run_retrieval_eval(
     golden: str = typer.Option("v2", help="Question set with evidence quotes"),
     split: str | None = typer.Option(None, help="dev, test, regression (comma-separated)"),
+    configs: str = typer.Option(
+        "vector", help="Comma-separated: vector, keyword, hybrid, each optionally +minilm or +bge"
+    ),
+    by_category: bool = typer.Option(False, help="Also break each config down by category"),
 ) -> None:
-    """Retrieval only (no LLM): recall@5/10/20 and MRR against the gold evidence quotes."""
+    """Retrieval only (no LLM): recall@5/10/20, MRR and latency against the gold evidence."""
     from edgar_rag import evaluation
 
     items = _load_items(golden, split, None)
-    records = evaluation.retrieval_eval(items)
-    if not records:
-        typer.echo("No questions with evidence quotes in this selection.")
-        return
 
     def mean(xs):
-        return sum(xs) / len(xs)
+        return sum(xs) / len(xs) if xs else 0.0
 
-    typer.echo(f"{len(records)} questions with gold evidence")
-    typer.echo(f"{'':12} {'n':>3} {'R@5':>6} {'R@10':>6} {'R@20':>6} {'MRR':>6}")
-    groups = {"all": records}
-    for r in records:
-        groups.setdefault(r.category, []).append(r)
-    for name, rs in groups.items():
-        typer.echo(
-            f"{name:12} {len(rs):>3} {mean([r.recall[5] for r in rs]):>6.2f} {mean([r.recall[10] for r in rs]):>6.2f} "
-            f"{mean([r.recall[20] for r in rs]):>6.2f} {mean([r.reciprocal_rank for r in rs]):>6.2f}"
-        )
-    p50 = sorted(r.seconds for r in records)[len(records) // 2]
-    typer.echo(f"median search latency: {p50 * 1000:.0f} ms")
+    def pct(xs, q):
+        xs = sorted(xs)
+        return xs[min(len(xs) - 1, int(q * len(xs)))]
+
+    rows = []
+    for cfg in [c.strip() for c in configs.split(",") if c.strip()]:
+        mode, _, reranker = cfg.partition("+")
+        recs = evaluation.retrieval_eval(items, mode=mode, reranker=reranker or "none")
+        if not recs:
+            typer.echo("No questions with evidence quotes in this selection.")
+            return
+        secs = [r.seconds for r in recs]
+        rows.append((cfg, len(recs), mean([r.recall[5] for r in recs]), mean([r.recall[10] for r in recs]),
+                     mean([r.recall[20] for r in recs]), mean([r.reciprocal_rank for r in recs]),
+                     pct(secs, 0.5) * 1000, pct(secs, 0.95) * 1000))
+        typer.echo(f"  done: {cfg}")
+        if by_category:
+            cats: dict[str, list] = {}
+            for r in recs:
+                cats.setdefault(r.category, []).append(r)
+            for cat, rs in sorted(cats.items()):
+                typer.echo(f"    {cat:13} n={len(rs):>2} R@5 {mean([r.recall[5] for r in rs]):.2f} "
+                           f"R@10 {mean([r.recall[10] for r in rs]):.2f} MRR {mean([r.reciprocal_rank for r in rs]):.2f}")
+
+    lines = [f"Retrieval ablation ({golden}, split: {split or 'all'}, {rows[0][1]} questions with gold evidence)", "",
+             "| Config | R@5 | R@10 | R@20 | MRR | p50 ms | p95 ms |", "|---|---|---|---|---|---|---|"]
+    for cfg, _, r5, r10, r20, mrr, p50, p95 in rows:
+        lines.append(f"| {cfg} | {r5:.3f} | {r10:.3f} | {r20:.3f} | {mrr:.3f} | {p50:.0f} | {p95:.0f} |")
+    table = "\n".join(lines) + "\n"
+    out = evaluation.results_dir(golden) / f"retrieval_{(split or 'all').replace(',', '+')}.md"
+    out.write_text(table)
+    typer.echo("\n" + table)
 
 
 def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> None:

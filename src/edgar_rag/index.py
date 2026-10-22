@@ -33,4 +33,15 @@ def index_chunks(chunks: list[Chunk]) -> int:
         for accession in {c.accession_number for c in chunks}:
             table.delete(f"accession_number = '{accession}'")
         table.add(rows)
+    build_keyword_index()
     return len(rows)
+
+
+def build_keyword_index() -> None:
+    """BM25 full-text index on chunk text, for keyword and hybrid search. Stemming lets
+    "restructured" match "restructuring"; stop words ("the", "of") are ignored. Rebuilt after
+    each indexing run; it takes well under a second for a few thousand chunks."""
+    from lancedb.index import FTS
+
+    table = connect().open_table(TABLE_NAME)
+    table.create_index("text", config=FTS(stem=True, remove_stop_words=True, language="English"), replace=True)

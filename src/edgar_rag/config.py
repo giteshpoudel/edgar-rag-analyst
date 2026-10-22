@@ -44,3 +44,21 @@ def llm_base_url() -> str:
 
 def data_dir() -> Path:
     return Path(os.getenv("DATA_DIR", "data"))
+
+
+# --- Retrieval (W2). Defaults keep v1 behaviour until the ablation picks a winner. ---------
+
+
+def retrieval_mode() -> str:
+    """vector (meaning), keyword (BM25 full-text) or hybrid (both, fused by reciprocal rank)."""
+    return os.getenv("RETRIEVAL_MODE", "vector").strip().lower()
+
+
+def reranker() -> str:
+    """none, minilm or bge: a cross-encoder that re-orders the top candidates."""
+    return os.getenv("RERANKER", "none").strip().lower()
+
+
+def rerank_candidates() -> int:
+    """How many first-stage results the reranker re-orders."""
+    return int(os.getenv("RERANK_CANDIDATES", "30"))

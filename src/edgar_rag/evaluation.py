@@ -127,18 +127,24 @@ class RetrievalRecord(BaseModel):
     seconds: float
 
 
-def retrieval_eval(items: list[GoldenItem], ks: tuple[int, ...] = (5, 10, 20)) -> list[RetrievalRecord]:
+def retrieval_eval(
+    items: list[GoldenItem], ks: tuple[int, ...] = (5, 10, 20), mode: str | None = None,
+    reranker: str | None = None,
+) -> list[RetrievalRecord]:
     """Search the top max(ks) chunks for each question with gold evidence, filtered to the
-    question's company when it names one (as the agent does), and score against the quotes."""
+    question's company when it names one (as the agent does), and score against the quotes.
+    One warm-up search first, so model loading isn't counted as search latency."""
     from edgar_rag.retriever import search
 
+    with_evidence = [i for i in items if i.evidence]
+    if with_evidence:
+        search(with_evidence[0].question, k=max(ks), mode=mode, reranker=reranker)
     records = []
-    for item in items:
-        if not item.evidence:
-            continue
+    for item in with_evidence:
         tickers = sorted({e.ticker for e in item.evidence})
         start = time.monotonic()
-        results = search(item.question, k=max(ks), ticker=tickers[0] if len(tickers) == 1 else None)
+        results = search(item.question, k=max(ks), ticker=tickers[0] if len(tickers) == 1 else None,
+                         mode=mode, reranker=reranker)
         found = [quotes_in_chunk(r.chunk.text, r.chunk.ticker, item.evidence) for r in results]
         records.append(RetrievalRecord(
             id=item.id, category=item.category,
