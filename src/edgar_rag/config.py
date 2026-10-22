@@ -49,14 +49,28 @@ def data_dir() -> Path:
 # --- Retrieval (W2). Defaults keep v1 behaviour until the ablation picks a winner. ---------
 
 
+RETRIEVAL_MODES = ("vector", "keyword", "hybrid")
+RERANKERS = ("none", "minilm", "bge")
+
+
+def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    """Read a setting and reject unknown values immediately: a typo should stop a run before
+    the first question, not quietly break every search (this happened once: 40 minutes of
+    eval runs with RETRIEVAL_MODE="hybrid none")."""
+    value = os.getenv(name, default).strip().lower()
+    if value not in allowed:
+        raise RuntimeError(f"{name}={value!r} is not valid; use one of: {', '.join(allowed)}")
+    return value
+
+
 def retrieval_mode() -> str:
     """vector (meaning), keyword (BM25 full-text) or hybrid (both, fused by reciprocal rank)."""
-    return os.getenv("RETRIEVAL_MODE", "vector").strip().lower()
+    return _choice("RETRIEVAL_MODE", "vector", RETRIEVAL_MODES)
 
 
 def reranker() -> str:
     """none, minilm or bge: a cross-encoder that re-orders the top candidates."""
-    return os.getenv("RERANKER", "none").strip().lower()
+    return _choice("RERANKER", "none", RERANKERS)
 
 
 def rerank_candidates() -> int:
