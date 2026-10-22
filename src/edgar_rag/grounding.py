@@ -129,6 +129,7 @@ def _source_values(sources: str) -> Sources:
                 row.append(v)
                 continue
             direct.add(v)
+            direct.add(abs(c.written))  # "$30.71 billion" may be quoted as "30.71" under a "$B" header
             for scale in (1e3, 1e6, 1e9):
                 direct.add(v * scale)
             # Small integers (counts, day numbers, footnote marks) aren't meaningful operands.
