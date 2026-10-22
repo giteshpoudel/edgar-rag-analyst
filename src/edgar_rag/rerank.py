@@ -7,14 +7,15 @@ run per pair. So it only re-orders the top few dozen candidates from the fast fi
 """
 
 import os
-import threading
+
+from edgar_rag.embeddings import MODEL_LOCK
 
 MODELS = {
-    "minilm": "cross-encoder/ms-marco-MiniLM-L-6-v2",  # 22M parameters: fast on CPU
+    "minilm": "cross-encoder/ms-marco-MiniLM-L-6-v2",  # 22M parameters: fast
     "bge": "BAAI/bge-reranker-base",  # 278M parameters: stronger, slower
 }
 
-_lock = threading.Lock()  # torch models aren't safe to load or run from several threads at once
+_lock = MODEL_LOCK  # shared with the embedder: two models on the GPU at once crashed Metal
 _loaded: dict = {}
 
 
