@@ -60,12 +60,21 @@ class Filing(BaseModel):
 class SecClient:
     def __init__(self, cache_dir: Path | None = None, transport: httpx.BaseTransport | None = None) -> None:
         self.cache_dir = cache_dir or config.data_dir() / "raw"
-        self._http = httpx.Client(
-            transport=transport,  # tests pass a fake
-            headers={"User-Agent": config.sec_user_agent(), "Accept-Encoding": "gzip, deflate"},
-            timeout=30.0,
-            follow_redirects=True,
-        )
+        self._transport = transport  # tests pass a fake
+        self._client: httpx.Client | None = None
+
+    @property
+    def _http(self) -> httpx.Client:
+        """Created on the first real request, so reading cached files needs no SEC_USER_AGENT
+        (CI runs on a frozen data snapshot and never contacts the SEC)."""
+        if self._client is None:
+            self._client = httpx.Client(
+                transport=self._transport,
+                headers={"User-Agent": config.sec_user_agent(), "Accept-Encoding": "gzip, deflate"},
+                timeout=30.0,
+                follow_redirects=True,
+            )
+        return self._client
 
     def _get(self, url: str) -> httpx.Response:
         """GET with the shared throttle, retrying timeouts, 429s and 5xx with backoff (the SEC

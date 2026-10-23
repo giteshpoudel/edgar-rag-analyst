@@ -1,0 +1,90 @@
+# CI regression gate (W6). Every pull request: lint and offline unit tests, then the eval gate,
+# which answers the dev split (48 questions) with the real model on a frozen data snapshot and
+# fails if scores drop below evals/baseline.json. Branch protection on main requires both jobs.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true  # a new push to the same PR replaces the running check
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint-test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (CPU-only torch, ~200 MB instead of ~2.5 GB of CUDA wheels)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+      - run: ruff check src tests
+      - name: Unit tests (offline, no API key)
+        run: pytest -q tests
+
+  eval-gate:
+    name: Eval gate
+    needs: lint-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI_DATA_RELEASE: ci-data-v1
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      LLM_MODEL: deepseek-flash
+      LLM_BASE_URL: https://api.deepseek.com
+      JUDGE_MODEL: deepseek-v4-pro
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the API key
+        # Fail rather than skip: a missing secret must not quietly switch the gate off.
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "::error::DEEPSEEK_API_KEY secret is not set; the eval gate can't run."
+            exit 1
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-small-en-v1.5
+      - name: Download the frozen data snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$CI_DATA_RELEASE" --pattern edgar-ci-data.tar.gz
+          scripts/ci_data.sh check edgar-ci-data.tar.gz
+          tar -xzf edgar-ci-data.tar.gz
+      - name: Run the gate (scores go to the job summary)
+        run: edgar gate --concurrency 16
+      - name: Keep per-question results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gate-results
+          path: evals/results/ci/
+          if-no-files-found: ignore

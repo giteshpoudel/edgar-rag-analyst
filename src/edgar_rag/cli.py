@@ -291,6 +291,57 @@ def compare(
     typer.echo(f"B - A = {c.diff:+.1%}, 95% CI [{c.ci_low:+.1%}, {c.ci_high:+.1%}] over {c.questions} questions: {verdict}")
 
 
+@app.command(name="make-baseline")
+def make_baseline(
+    runs: str = typer.Argument(..., help="Repeat-run result files, a glob such as 'agent_dev_run*'"),
+    golden: str = typer.Option("v2", help="Which results folder"),
+    split: str = typer.Option("dev", help="The split those runs cover (the gate's smoke set)"),
+) -> None:
+    """Build evals/baseline.json for the CI gate from repeated runs of the same code."""
+    from edgar_rag import evaluation, gate
+
+    files = sorted(evaluation.results_dir(golden).glob(runs + ("" if runs.endswith(".jsonl") else ".jsonl")))
+    if len(files) < 3:
+        raise typer.BadParameter("need at least 3 runs to measure run-to-run spread")
+    loaded = [[evaluation.Record.model_validate_json(line) for line in f.read_text().splitlines() if line]
+              for f in files]
+    cfg = {"model": config.llm_model(), "judge": config.judge_model(),
+           "retrieval": config.retrieval_mode(), "reranker": config.reranker(),
+           "grounding_guard": config.grounding_guard(), "files": [f.name for f in files]}
+    baseline = gate.make_baseline(loaded, golden, split, cfg)
+    gate.save_baseline(baseline)
+    typer.echo(f"Wrote {gate.BASELINE_PATH}: pass rate {baseline.pass_rate:.1%} over {baseline.runs} runs "
+               f"{[f'{r:.1%}' for r in baseline.pass_rates]}, tolerance {baseline.tolerance:.1%}, "
+               f"number accuracy floor {baseline.number_accuracy_floor:.1%}")
+
+
+@app.command(name="gate")
+def run_gate(
+    concurrency: int = typer.Option(16, help="Questions in flight at once"),
+    out: str = typer.Option("evals/results/ci", help="Where to save this run's records"),
+) -> None:
+    """Run the smoke set and compare with evals/baseline.json; exit 1 if it regressed (CI)."""
+    import os
+    from pathlib import Path
+
+    from edgar_rag import evaluation, gate
+
+    baseline = gate.load_baseline()
+    items = _load_items(baseline.golden, baseline.split, None)
+    if len(items) != baseline.questions:
+        typer.echo(f"Note: smoke set has {len(items)} questions, baseline was built on {baseline.questions}")
+    records = evaluation.run("agent", items, workers=concurrency)
+    evaluation.save(records, "agent", Path(out), "_gate")
+    result = gate.check(records, baseline)
+    report = gate.markdown(result, baseline, records)
+    typer.echo(report)
+    summary = os.getenv("GITHUB_STEP_SUMMARY")  # GitHub Actions shows this file on the run page
+    if summary:
+        with open(summary, "a") as f:
+            f.write(report)
+    raise typer.Exit(0 if result.passed else 1)
+
+
 @app.command(name="retrieval-eval")
 def run_retrieval_eval(
     golden: str = typer.Option("v2", help="Question set with evidence quotes"),

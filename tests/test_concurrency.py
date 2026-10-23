@@ -181,3 +181,9 @@ def test_sec_throttle_is_shared_across_clients_and_retries(monkeypatch, tmp_path
     gaps = [b - a for a, b in pairwise(times)]
     assert len(times) == 3
     assert all(g >= sec_client.MIN_SECONDS_BETWEEN_REQUESTS * 0.95 for g in gaps)
+
+
+def test_cached_reads_need_no_user_agent(monkeypatch, tmp_path):
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    (tmp_path / "company_tickers.json").write_text('{"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}')
+    assert sec_client.SecClient(cache_dir=tmp_path).lookup_cik("AAPL") == (320193, "Apple Inc.")
