@@ -1,6 +1,6 @@
 # edgar-rag-analyst
 
-An AI analyst that answers questions about SEC 10-K filings for 16 companies (Apple, Microsoft and 14 semiconductor makers, from NVIDIA to Intel), with a citation for every claim. **Explanations come from the filing text (RAG); numbers come from the SEC's structured XBRL data through function calls, and arithmetic is done by a calculator tool.** A 58-question eval suite measures the result.
+An AI analyst that answers questions about SEC 10-K filings for 15 companies (Apple, Microsoft and 13 semiconductor makers, from NVIDIA to Intel), with a citation for every claim. **Explanations come from the filing text (RAG); numbers come from the SEC's structured XBRL data through function calls, and arithmetic is done by a calculator tool.** A 58-question eval suite measures the result.
 
 Everything runs locally except the LLM call: free SEC data, a local embedding model and an embedded vector database.
 
@@ -57,7 +57,7 @@ flowchart LR
 
 ## Eval results
 
-58 questions across 16 companies, including 7 sector questions that span all 13 semiconductor companies. Expected numbers come from XBRL; narrative answers are checked against key facts verified in the filing text, graded by `deepseek-v4-pro` (a different, stronger model than the one answering). **Simple** is plain RAG: one search, then one LLM call, with no tools.
+58 questions across 15 companies, including 7 sector questions that span all 13 semiconductor companies. Expected numbers come from XBRL; narrative answers are checked against key facts verified in the filing text, graded by `deepseek-v4-pro` (a different, stronger model than the one answering). **Simple** is plain RAG: one search, then one LLM call, with no tools.
 
 | Metric | agent | simple |
 |---|---|---|
@@ -212,7 +212,7 @@ edgar gate                  # the CI check: dev split vs evals/baseline.json
 
 ## Limitations
 
-- 16 companies, latest 10-K only. U.S. 10-K filers only: foreign 20-F filers (TSMC, ASML) use a different form and IFRS tags.
+- 15 companies, latest 10-K only. U.S. 10-K filers only: foreign 20-F filers (TSMC, ASML) use a different form and IFRS tags.
 - Intel's custom 10-K layout has no "Business" heading, so its Item 1 isn't separated; KLA doesn't tag operating income, so that metric is unavailable for KLA.
 - Twelve financial metrics, annual values only. No quarterly data or segment-level XBRL figures yet. Banks, insurers and REITs would need industry-specific metrics.
 - Fiscal years are named by the year they end in, which matches these companies but not every filer.
