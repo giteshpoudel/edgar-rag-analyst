@@ -107,6 +107,23 @@ TRACING=phoenix edgar ask "How did NVIDIA's revenue change in fiscal 2025?"
 
 `edgar ask` prints each answer's tokens, cost, time and trace id. With `TRACING=off` (the default) spans are still recorded in-process for the cost figures, just not exported.
 
+## Speed: concurrency, async and retries
+
+The eval runner and agent are async ([agent.py](src/edgar_rag/agent.py), [evaluation.py](src/edgar_rag/evaluation.py)): a semaphore caps how many questions are in flight, tool calls the model requests in the same turn run in parallel, and LLM and SEC requests retry timeouts, 429s and 5xx errors with jittered exponential backoff ([retry.py](src/edgar_rag/retry.py)). Each retry is an event on the trace.
+
+Full v2 dev + test run (140 questions), same machine, one run each:
+
+| Runner | Wall time | Pass rate |
+|---|---|---|
+| Before: threads, 4 workers | 259 s | 136/140 |
+| Async, 4 in flight | 291 s | 136/140 |
+| Threads, 16 workers (control) | 85 s | 137/140 |
+| **Async, 16 in flight (new default)** | **76 s** | 137/140 |
+
+**3.4× faster**, but almost all of it comes from running more questions at once, not from async itself. Traces show 94% of answer time is waiting on the LLM, and threads wait in parallel just as well. At equal concurrency async was no faster (291 s vs 259 s at 4; API speed varies between runs, so read that as no difference). Async's own gains are smaller: no thread per question, the tools of one model turn run together, and retries wait with `asyncio.sleep` without blocking other questions. Per-question latency is unchanged (p50 3.8 s), and so is cost.
+
+Citations stay deterministic with parallel tools: each call's sources are numbered after the batch finishes, in the order the model asked for them, not the order they finished. SEC requests share one process-wide throttle (under the 10 requests/second limit), however many clients or threads make them.
+
 ## Scaling: the semiconductor pilot
 
 Adding 13 semiconductor companies tested whether the pipeline generalizes. `edgar ingest` runs download → chunk → index for a list of tickers and prints a **health report** per filing, because nobody reads 13 (or 500) filings by hand:
@@ -167,6 +184,7 @@ edgar ask "Rank the semiconductor companies by gross margin"
 edgar ask --simple "..."    # plain RAG, no tools (the eval baseline)
 edgar search "export controls" --ticker NVDA --item 1A   # retrieval only
 edgar eval                  # run the eval suite in both modes
+edgar eval --golden v2 --split dev,test --mode agent --concurrency 16
 ```
 
 ## Limitations
@@ -196,6 +214,7 @@ src/edgar_rag/
   scoring.py      number matching, retrieval metrics, LLM judge
   evaluation.py   eval runner and summary
   tracing.py      OpenTelemetry spans, token and cost accounting
+  retry.py        retries with backoff for the LLM API and SEC
   cli.py          `edgar` command
 tests/            offline unit tests (no API key needed)
 evals/

@@ -1,8 +1,8 @@
 """Run the golden question set through a mode ("agent" or "simple"), score it, and summarize."""
 
+import asyncio
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -14,7 +14,7 @@ from edgar_rag import tracing
 from edgar_rag.scoring import (
     Evidence,
     Expected,
-    judge,
+    ajudge,
     number_found,
     quotes_in_chunk,
     recall_at_k,
@@ -169,12 +169,12 @@ def retrieval_eval(
     return records
 
 
-def _run_mode(question: str, mode: Mode) -> dict:
+async def _run_mode(question: str, mode: Mode) -> dict:
     """Answer one question; return the parts scoring needs, independent of mode."""
     if mode == "simple":
         from edgar_rag.answer import answer
 
-        r = answer(question)
+        r = await asyncio.to_thread(answer, question)  # plain RAG stays synchronous
         return {
             "answer": r.text,
             "tools_used": ["search"],
@@ -187,9 +187,9 @@ def _run_mode(question: str, mode: Mode) -> dict:
             "completion_tokens": r.llm.completion_tokens,
             "truncated": r.llm.truncated,
         }
-    from edgar_rag.agent import ask
+    from edgar_rag.agent import aask
 
-    r = ask(question)
+    r = await aask(question)
     return {
         "answer": r.text,
         "tools_used": [c.name for c in r.tool_calls],
@@ -207,6 +207,10 @@ def _run_mode(question: str, mode: Mode) -> dict:
 
 
 def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
+    return asyncio.run(aevaluate_one(item, mode))
+
+
+async def aevaluate_one(item: GoldenItem, mode: Mode) -> Record:
     """Answer and score one question inside a root span, so the whole run (answer, tools,
     retrieval, judge) is one trace; then attach that trace's cost and timing to the record."""
     with tracing.span("eval.question", "CHAIN", **{
@@ -214,7 +218,7 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
         "edgar.eval.category": item.category, "edgar.eval.mode": mode,
     }) as span:
         trace_id = tracing.current_trace_id()
-        record = _evaluate(item, mode)
+        record = await _evaluate(item, mode)
         tracing.set_attributes(span, {"output.value": record.answer, "edgar.eval.passed": record.passed})
         if record.error:
             tracing.mark_error(span, record.error)
@@ -231,10 +235,10 @@ def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
     })
 
 
-def _evaluate(item: GoldenItem, mode: Mode) -> Record:
+async def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     start = time.monotonic()
     try:
-        out = _run_mode(item.question, mode)
+        out = await _run_mode(item.question, mode)
         error = ""
     except Exception as e:  # noqa: BLE001 - one failure shouldn't stop the run; it's scored as a fail
         out = {"answer": "", "tools_used": [], "retrieved_items": [], "invalid_citations": [],
@@ -253,7 +257,7 @@ def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     hit, rr = (None, None)
     if item.expected_items:
         hit, rr = retrieval_scores(out["retrieved_items"], item.expected_items)
-    verdict = judge(item.question, answer, item.key_points) if answer else None
+    verdict = await ajudge(item.question, answer, item.key_points) if answer else None
     covered = verdict.key_points if verdict else [False] * len(item.key_points)
     refused = verdict.refused if verdict else True
 
@@ -273,9 +277,29 @@ def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     )
 
 
-def run(mode: Mode, items: list[GoldenItem], workers: int = 4) -> list[Record]:
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda it: evaluate_one(it, mode), items))
+DEFAULT_CONCURRENCY = 16
+
+
+def run(mode: Mode, items: list[GoldenItem], workers: int = DEFAULT_CONCURRENCY) -> list[Record]:
+    """Evaluate items with at most `workers` questions in flight at once."""
+    return asyncio.run(arun(mode, items, workers))
+
+
+async def arun(mode: Mode, items: list[GoldenItem], concurrency: int = DEFAULT_CONCURRENCY) -> list[Record]:
+    # Load the embedding model before starting: otherwise the first search loads it while every
+    # other question queues on the model lock (traces showed ~6.4 s stalls, D-79).
+    from edgar_rag.embeddings import embed_query
+
+    await asyncio.to_thread(embed_query, "warm up")
+    # The semaphore is the concurrency limit: a question waits here until a slot is free. While
+    # one question waits on the API, the event loop runs others, so no thread per question.
+    slots = asyncio.Semaphore(concurrency)
+
+    async def one(item: GoldenItem) -> Record:
+        async with slots:
+            return await aevaluate_one(item, mode)
+
+    return list(await asyncio.gather(*(one(it) for it in items)))  # results in input order
 
 
 # --- Summary -------------------------------------------------------------------------------
@@ -416,12 +440,13 @@ def _fmt(value: float | None, style: str) -> str:
             "usd": f"${value:.4f}", "usd2": f"${value:,.2f}"}[style]
 
 
-def summary_markdown(summaries: dict[str, dict], model: str, judge: str) -> str:
+def summary_markdown(summaries: dict[str, dict], model: str, judge: str, timing: str = "") -> str:
     modes = list(summaries)
     lines = [
         f"# Eval results ({datetime.now():%Y-%m-%d})",
         "",
-        f"{next(iter(summaries.values()))['questions']} questions · model `{model}` · judge `{judge}`",
+        f"{next(iter(summaries.values()))['questions']} questions · model `{model}` · judge `{judge}`"
+        + (f" · {timing}" if timing else ""),
         "",
         "| Metric | " + " | ".join(modes) + " |",
         "|---|" + "---|" * len(modes),

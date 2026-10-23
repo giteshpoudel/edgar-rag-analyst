@@ -153,7 +153,9 @@ def _close(claim: NumberClaim, value: float) -> bool:
         return value == 0
     scale = target / claim.written if claim.written else 1
     tol = max(0.5 * 10 ** -claim.decimals * scale, 0.0005 * target)
-    return abs(abs(value) - target) <= tol
+    # Exact half-way cases ("21.6" from 71.07 - 49.52 = 21.55) land a hair outside the
+    # tolerance in floating point (0.0500000000000007), so allow a tiny epsilon.
+    return abs(abs(value) - target) <= tol * (1 + 1e-9)
 
 
 def check(answer: str, sources: str, question: str = "") -> GroundingReport:

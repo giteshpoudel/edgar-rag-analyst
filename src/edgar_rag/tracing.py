@@ -164,6 +164,15 @@ def span(name: str, kind: str, **attributes):
         yield s
 
 
+def start_span(name: str, kind: str, **attributes) -> Span:
+    """A span that isn't made current and must be ended by the caller: for work that runs in
+    another thread (enter it there with trace.use_span) and finishes after it returns."""
+    s = tracer().start_span(name)
+    s.set_attribute(KIND, kind)
+    set_attributes(s, attributes)
+    return s
+
+
 def current_trace_id() -> int:
     return trace.get_current_span().get_span_context().trace_id
 

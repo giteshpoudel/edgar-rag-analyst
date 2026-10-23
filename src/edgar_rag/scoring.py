@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from edgar_rag import config
-from edgar_rag.llm import complete
+from edgar_rag.llm import acomplete, complete
 
 # --- Numbers -------------------------------------------------------------------------------
 
@@ -153,17 +153,13 @@ class Judgement(BaseModel):
     raw: str = ""
 
 
-def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
+def _judge_messages(question: str, answer: str, key_points: list[str]) -> list[dict]:
     points = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(key_points)) or "(none)"
     user = f"Question: {question}\n\nKey points:\n{points}\n\nAnswer to grade:\n{answer}"
-    # The judge model reasons first; its reasoning tokens need room (300 was not enough).
-    # A different, stronger model than the one being graded judges more consistently (D-41).
-    response = complete(
-        [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
-        max_tokens=4000,
-        model=config.judge_model(),
-        span_name="judge",  # kept apart from the system's cost in reports
-    )
+    return [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}]
+
+
+def _parse_verdict(response, key_points: list[str]) -> Judgement:
     choice = response.choices[0]
     raw = (choice.message.content or "").strip()
     match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -176,3 +172,18 @@ def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
         return Judgement(key_points=[False] * len(key_points), refused=False, error=reason, raw=raw)
     covered = [bool(x) for x in data["key_points"]]
     return Judgement(key_points=covered, refused=bool(data.get("refused", False)), raw=raw)
+
+
+# The judge model reasons first; its reasoning tokens need room (300 was not enough).
+# A different, stronger model than the one being graded judges more consistently (D-41).
+# span_name="judge" keeps its cost apart from the system's in reports.
+def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
+    response = complete(_judge_messages(question, answer, key_points), max_tokens=4000,
+                        model=config.judge_model(), span_name="judge")
+    return _parse_verdict(response, key_points)
+
+
+async def ajudge(question: str, answer: str, key_points: list[str]) -> Judgement:
+    response = await acomplete(_judge_messages(question, answer, key_points), max_tokens=4000,
+                               model=config.judge_model(), span_name="judge")
+    return _parse_verdict(response, key_points)

@@ -4,17 +4,19 @@
                             \\--no---> final answer (with [n] citations)
 """
 
+import asyncio
 import json
 import re
 
+from opentelemetry import trace
 from pydantic import BaseModel, ValidationError
 
 from edgar_rag import companies, config, tracing
 from edgar_rag.answer import parse_citations
 from edgar_rag.grounding import check as check_grounding
-from edgar_rag.llm import complete
+from edgar_rag.llm import acomplete
 from edgar_rag.prompts import AGENT_SYSTEM
-from edgar_rag.tools import TOOLS, Source, Sources
+from edgar_rag.tools import TOOLS, Source, Sources, StagedSources
 
 MAX_STEPS = 6  # LLM calls per question; stops runaway loops
 # Up to this many companies, list them all in the prompt (~15 tokens each). Beyond it the list
@@ -91,8 +93,43 @@ def run_tool(name: str, raw_args: str, sources: Sources) -> tuple[dict, str, boo
     return args_dict, result, result.startswith("ERROR")
 
 
-def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_calls: list[ToolCall],
-          max_steps: int, first_step: int = 1) -> tuple[str, bool, int, int, int]:
+async def _run_tools(tool_calls_requested, sources: Sources, step: int) -> list[ToolCall]:
+    """Run every tool call from one model turn at the same time (W5), each in a worker thread
+    (the tools are ordinary blocking code). Citations are numbered afterwards, in the order the
+    model requested the calls, so the numbering doesn't depend on which finished first."""
+    batch = len(tool_calls_requested)
+    staged = [StagedSources() for _ in tool_calls_requested]
+    spans = [
+        tracing.start_span(f"tool.{tc.function.name}", "TOOL", **{
+            "tool.name": tc.function.name, "input.value": tc.function.arguments,
+            "edgar.step": step, "edgar.parallel_calls": batch,
+        })
+        for tc in tool_calls_requested
+    ]
+
+    def work(tc, span, st):
+        with trace.use_span(span, end_on_exit=False):  # spans the tool creates nest under it
+            return run_tool(tc.function.name, tc.function.arguments, st)
+
+    try:
+        outputs = await asyncio.gather(*(
+            asyncio.to_thread(work, tc, span, st) for tc, span, st in zip(tool_calls_requested, spans, staged)
+        ))
+        calls = []
+        for tc, span, st, (args, result, error) in zip(tool_calls_requested, spans, staged, outputs):
+            result = st.commit(result, sources)
+            tracing.set_attributes(span, {"tool.parameters": args, "output.value": result})
+            if error:
+                tracing.mark_error(span, result[:200])
+            calls.append(ToolCall(step=step, name=tc.function.name, arguments=args, result=result, error=error))
+        return calls
+    finally:
+        for span in spans:
+            span.end()
+
+
+async def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_calls: list[ToolCall],
+                max_steps: int, first_step: int = 1) -> tuple[str, bool, int, int, int]:
     """Call the LLM and run the tools it asks for, until it answers or hits max_steps.
     Returns (text, truncated, last step number, prompt tokens, completion tokens)."""
     prompt_tokens = completion_tokens = 0
@@ -104,7 +141,7 @@ def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_call
             # Force an answer. Removing the tools entirely made the model write tool calls out
             # as text (seen in evals), so keep them listed but disallow calling them.
             messages.append({"role": "user", "content": FINAL_STEP_NUDGE})
-        response = complete(messages, tools=schemas, tool_choice="none" if last else None)
+        response = await acomplete(messages, tools=schemas, tool_choice="none" if last else None)
         if response.usage:
             prompt_tokens += response.usage.prompt_tokens
             completion_tokens += response.usage.completion_tokens
@@ -126,25 +163,21 @@ def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_call
             assistant["reasoning_content"] = reasoning
         messages.append(assistant)
 
-        for tc in message.tool_calls:
-            with tracing.span(f"tool.{tc.function.name}", "TOOL", **{
-                "tool.name": tc.function.name, "input.value": tc.function.arguments,
-                "edgar.step": step,
-            }) as span:
-                args, result, error = run_tool(tc.function.name, tc.function.arguments, sources)
-                tracing.set_attributes(span, {"tool.parameters": args, "output.value": result})
-                if error:
-                    tracing.mark_error(span, result[:200])
-            tool_calls.append(
-                ToolCall(step=step, name=tc.function.name, arguments=args, result=result, error=error)
-            )
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+        calls = await _run_tools(message.tool_calls, sources, step)
+        tool_calls.extend(calls)
+        for tc, call in zip(message.tool_calls, calls):
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": call.result})
     return text, truncated, step, prompt_tokens, completion_tokens
 
 
 def ask(question: str) -> AgentAnswer:
+    """Answer one question (blocking). Inside async code, await aask() instead."""
+    return asyncio.run(aask(question))
+
+
+async def aask(question: str) -> AgentAnswer:
     with tracing.span("agent", "AGENT", **{"input.value": question}) as span:
-        result = _ask(question)
+        result = await _ask(question)
         tracing.set_attributes(span, {
             "output.value": result.text, "edgar.steps": result.steps,
             "edgar.tool_calls": len(result.tool_calls), "edgar.malformed": result.malformed,
@@ -153,7 +186,7 @@ def ask(question: str) -> AgentAnswer:
         return result
 
 
-def _ask(question: str) -> AgentAnswer:
+async def _ask(question: str) -> AgentAnswer:
     sources = Sources()
     tool_calls: list[ToolCall] = []
     schemas = [t.schema_for_llm() for t in TOOLS.values()]
@@ -161,7 +194,7 @@ def _ask(question: str) -> AgentAnswer:
         {"role": "system", "content": AGENT_SYSTEM.format(companies=available_companies())},
         {"role": "user", "content": question},
     ]
-    text, truncated, step, prompt_tokens, completion_tokens = _loop(messages, schemas, sources, tool_calls, MAX_STEPS)
+    text, truncated, step, prompt_tokens, completion_tokens = await _loop(messages, schemas, sources, tool_calls, MAX_STEPS)
 
     # Number grounding guard (W3): if the answer states numbers no tool result supports, give the
     # model one repair pass, with tools, to source or remove them.
@@ -175,7 +208,7 @@ def _ask(question: str) -> AgentAnswer:
         if unsupported_before:
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": REPAIR_PROMPT.format(numbers=", ".join(unsupported_before))})
-            repaired, truncated, step, p_tok, c_tok = _loop(
+            repaired, truncated, step, p_tok, c_tok = await _loop(
                 messages, schemas, sources, tool_calls, REPAIR_STEPS, first_step=step + 1
             )
             prompt_tokens += p_tok

@@ -179,7 +179,7 @@ def run_eval(
     golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (198)"),
     split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
     only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
-    workers: int = typer.Option(4, help="Questions answered in parallel"),
+    workers: int = typer.Option(16, "--concurrency", "--workers", help="Questions in flight at once"),
     repeat: int = typer.Option(1, help="Runs per mode; >1 reports mean, range and flip rate"),
 ) -> None:
     """Run a golden question set, score it, and write the results."""
@@ -200,18 +200,25 @@ def run_eval(
         _repeat_runs(modes, items, workers, repeat, out_dir, tag)
         return
 
-    summaries = {}
+    import time
+
+    summaries, timings = {}, {}
     for m in modes:
         typer.echo(f"Running {len(items)} questions in {m} mode...")
+        started = time.monotonic()
         records = evaluation.run(m, items, workers=workers)
+        wall = time.monotonic() - started
         path = evaluation.save(records, m, out_dir, tag)
         summaries[m] = evaluation.summarize(records)
+        timings[m] = f"{wall:.0f} s wall time at concurrency {workers}"
+        typer.echo(f"  {timings[m]} ({len(records) / wall * 60:.0f} questions/minute)")
         failed = [r.id for r in records if not r.passed]
         typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · saved {path}")
         if failed:
             typer.echo(f"  failed: {', '.join(failed)}")
 
-    table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model())
+    table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model(),
+                                        "; ".join(f"{m}: {s}" for m, s in timings.items()))
     if not only:  # partial runs don't overwrite the committed summary
         (out_dir / f"summary{tag}.md").write_text(table)
     typer.echo("\n" + table)
@@ -219,6 +226,7 @@ def run_eval(
 
 def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
     import json
+    import time
 
     from edgar_rag import evaluation
     from edgar_rag.stats import summarize_runs
@@ -227,11 +235,14 @@ def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
         runs, pooled = [], []
         for k in range(1, repeat + 1):
             typer.echo(f"{m} run {k}/{repeat}: {len(items)} questions...")
+            started = time.monotonic()
             records = evaluation.run(m, items, workers=workers)
+            wall = time.monotonic() - started
             evaluation.save(records, m, out_dir, f"{tag}_run{k}")
             runs.append([json.loads(r.model_dump_json()) for r in records])
             pooled += records
-            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · {evaluation.cost_line(records)}")
+            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · {wall:.0f} s wall · "
+                       f"{evaluation.cost_line(records)}")
         s = summarize_runs(runs)
         typer.echo(
             f"{m}: mean {s.mean:.1%} (range {s.low:.1%}-{s.high:.1%}) over {s.runs} runs; "

@@ -5,13 +5,14 @@ Everything downloaded is cached under DATA_DIR so re-runs don't hit the network.
 """
 
 import json
+import threading
 import time
 from pathlib import Path
 
 import httpx
 from pydantic import BaseModel
 
-from edgar_rag import config
+from edgar_rag import config, retry
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
@@ -19,6 +20,20 @@ COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.js
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 
 MIN_SECONDS_BETWEEN_REQUESTS = 0.15  # ~6-7 req/s, safely under the SEC limit
+
+# One throttle for the whole process, not one per client: CompanyFacts creates its own client,
+# and concurrent eval questions run in several threads, so a per-client limit could be exceeded.
+_throttle_lock = threading.Lock()
+_last_request = 0.0
+
+
+def _wait_turn() -> None:
+    global _last_request
+    with _throttle_lock:
+        wait = MIN_SECONDS_BETWEEN_REQUESTS - (time.monotonic() - _last_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request = time.monotonic()
 
 
 class Filing(BaseModel):
@@ -43,23 +58,26 @@ class Filing(BaseModel):
 
 
 class SecClient:
-    def __init__(self, cache_dir: Path | None = None) -> None:
+    def __init__(self, cache_dir: Path | None = None, transport: httpx.BaseTransport | None = None) -> None:
         self.cache_dir = cache_dir or config.data_dir() / "raw"
         self._http = httpx.Client(
+            transport=transport,  # tests pass a fake
             headers={"User-Agent": config.sec_user_agent(), "Accept-Encoding": "gzip, deflate"},
             timeout=30.0,
             follow_redirects=True,
         )
-        self._last_request = 0.0
 
     def _get(self, url: str) -> httpx.Response:
-        wait = MIN_SECONDS_BETWEEN_REQUESTS - (time.monotonic() - self._last_request)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request = time.monotonic()
-        response = self._http.get(url)
-        response.raise_for_status()
-        return response
+        """GET with the shared throttle, retrying timeouts, 429s and 5xx with backoff (the SEC
+        answers 429 or 503 when it thinks a client is going too fast)."""
+
+        def attempt() -> httpx.Response:
+            _wait_turn()
+            response = self._http.get(url)
+            response.raise_for_status()
+            return response
+
+        return retry.call(attempt)
 
     def _get_json_cached(self, url: str, path: Path) -> dict:
         if path.exists():

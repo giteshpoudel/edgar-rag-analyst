@@ -53,8 +53,16 @@ def _vector(question: str, n: int, where: str | None) -> list[SearchResult]:
     return _rows_to_results(query.limit(n).to_list(), "_distance", lambda d: 1 - d)
 
 
+def fts_query(question: str) -> str:
+    """The keyword-search form of a query. Double quotes make LanceDB run a phrase query, which
+    needs word positions our BM25 index doesn't store: the agent searching for
+    '"depreciation, amortization, and other"' failed with "position is not found but required
+    for phrase queries". BM25 here is bag-of-words (what the W2 ablation measured), so drop them."""
+    return question.replace('"', " ").replace("“", " ").replace("”", " ")
+
+
 def _keyword(question: str, n: int, where: str | None) -> list[SearchResult]:
-    query = connect().open_table(TABLE_NAME).search(question, query_type="fts")
+    query = connect().open_table(TABLE_NAME).search(fts_query(question), query_type="fts")
     if where:
         query = query.where(where, prefilter=True)
     return _rows_to_results(query.limit(n).to_list(), "_score")
