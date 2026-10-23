@@ -68,7 +68,7 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
 
 def retrieval_mode() -> str:
     """vector (meaning), keyword (BM25 full-text) or hybrid (both, fused by reciprocal rank)."""
-    return _choice("RETRIEVAL_MODE", "hybrid", RETRIEVAL_MODES)
+    return _choice("RETRIEVAL_MODE", "vector", RETRIEVAL_MODES)
 
 
 def reranker() -> str:
