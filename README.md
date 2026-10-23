@@ -128,7 +128,7 @@ Citations stay deterministic with parallel tools: each call's sources are number
 
 Every pull request runs two checks ([ci.yml](.github/workflows/ci.yml)):
 
-1. **Lint and unit tests**: ruff and 29 offline tests (no API key), covering grounding, tracing and cost accounting, retries, parallel tool calls and the gate logic.
+1. **Lint and unit tests**: ruff and 35 offline tests (no API key), covering XBRL fact selection, grounding, keyword-query handling, tracing and cost accounting, retries, parallel tool calls and the gate logic.
 2. **Eval gate** ([gate.py](src/edgar_rag/gate.py)): the 48-question v2 dev split, answered with the real model on a frozen, checksummed data snapshot (release [ci-data-v1](https://github.com/giteshpoudel/edgar-rag-analyst/releases/tag/ci-data-v1)), compared with [evals/baseline.json](evals/baseline.json). The score table goes to the job summary, and per-question results are kept as an artifact. The whole job takes about 1.5 minutes (34 s of it answering questions) and costs about $0.10.
 
 The baseline is 5 runs of the same code: 99.6% mean pass rate (one flip in 240 answers) and 100% number accuracy. The gate fails when:
@@ -139,7 +139,12 @@ The baseline is 5 runs of the same code: 99.6% mean pass rate (one flip in 240 a
 | Number accuracy | any drop below the lowest baseline run | < 100% |
 | Run errors | any (retries absorb transient API errors, so an error means something broke) | > 0 |
 
-**Broken-PR demo:** [PR #2](https://github.com/giteshpoudel/edgar-rag-analyst/pull/2) makes a plausible one-word change: it names fiscal years by the year they start in, not the year they end in. Lint and every unit test pass. The eval gate fails it, though not on the pass rate. The agent noticed the wrong period dates in tool results and looked figures up again, so only one more question failed. **Number accuracy is what caught it**, and cost rose 23% from the extra lookups. A gate on pass rate alone would have let this through.
+**Broken-PR demos.** Two deliberately broken pull requests, each a one-word change that passes ruff, show which layer catches which kind of bug:
+
+- [PR #3](https://github.com/giteshpoudel/edgar-rag-analyst/pull/3) **makes vector-only search the default.** The code is correct; it just answers worse. Unit tests pass. **The eval gate fails it**, on number accuracy (84–98% against a 100% floor; 95.5% in CI) and in one run on pass rate too. It failed in 6 of 6 runs (in CI, 2 local and 3 from W2).
+- [PR #2](https://github.com/giteshpoudel/edgar-rag-analyst/pull/2) **names fiscal years by the year they start in**, which shifts every figure by a year. In its first CI run **the eval gate passed it** (46/48, at the threshold). The agent read the period dates in tool output, noticed the wrong year and asked again; a local run failed, so the eval catches this bug only sometimes. The fix was a deterministic test, not a stricter eval: [test_xbrl.py](tests/test_xbrl.py) checks fiscal-year naming offline, and all 6 of its tests fail on this change.
+
+Lesson: **an agent can route around a broken component**, so end-to-end evals catch logic bugs poorly. A second experiment showed the same thing: cutting search results from 5 passages to 2 failed the gate in only 1 of 2 runs, because the agent searched more often. Logic belongs in unit tests and retrieval quality in the retrieval-only eval (recall@k); the eval gate guards answer quality.
 
 ## Scaling: the semiconductor pilot
 
