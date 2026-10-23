@@ -124,6 +124,23 @@ Full v2 dev + test run (140 questions), same machine, one run each:
 
 Citations stay deterministic with parallel tools: each call's sources are numbered after the batch finishes, in the order the model asked for them, not the order they finished. SEC requests share one process-wide throttle (under the 10 requests/second limit), however many clients or threads make them.
 
+## CI regression gate
+
+Every pull request runs two checks ([ci.yml](.github/workflows/ci.yml)):
+
+1. **Lint and unit tests**: ruff and 29 offline tests (no API key), covering grounding, tracing and cost accounting, retries, parallel tool calls and the gate logic.
+2. **Eval gate** ([gate.py](src/edgar_rag/gate.py)): the 48-question v2 dev split, answered with the real model on a frozen, checksummed data snapshot (release [ci-data-v1](https://github.com/giteshpoudel/edgar-rag-analyst/releases/tag/ci-data-v1)), compared with [evals/baseline.json](evals/baseline.json). The score table goes to the job summary, and per-question results are kept as an artifact. The whole job takes about 1.5 minutes (34 s of it answering questions) and costs about $0.10.
+
+The baseline is 5 runs of the same code: 99.6% mean pass rate (one flip in 240 answers) and 100% number accuracy. The gate fails when:
+
+| Check | Rule | Threshold now |
+|---|---|---|
+| Pass rate | below the baseline mean by more than the widest run-to-run drop plus one question | < 95.8% (fails at 45/48) |
+| Number accuracy | any drop below the lowest baseline run | < 100% |
+| Run errors | any (retries absorb transient API errors, so an error means something broke) | > 0 |
+
+**Broken-PR demo:** [PR #2](https://github.com/giteshpoudel/edgar-rag-analyst/pull/2) makes a plausible one-word change: it names fiscal years by the year they start in, not the year they end in. Lint and every unit test pass. The eval gate fails it, though not on the pass rate. The agent noticed the wrong period dates in tool results and looked figures up again, so only one more question failed. **Number accuracy is what caught it**, and cost rose 23% from the extra lookups. A gate on pass rate alone would have let this through.
+
 ## Scaling: the semiconductor pilot
 
 Adding 13 semiconductor companies tested whether the pipeline generalizes. `edgar ingest` runs download → chunk → index for a list of tickers and prints a **health report** per filing, because nobody reads 13 (or 500) filings by hand:
@@ -185,6 +202,7 @@ edgar ask --simple "..."    # plain RAG, no tools (the eval baseline)
 edgar search "export controls" --ticker NVDA --item 1A   # retrieval only
 edgar eval                  # run the eval suite in both modes
 edgar eval --golden v2 --split dev,test --mode agent --concurrency 16
+edgar gate                  # the CI check: dev split vs evals/baseline.json
 ```
 
 ## Limitations
@@ -215,6 +233,7 @@ src/edgar_rag/
   evaluation.py   eval runner and summary
   tracing.py      OpenTelemetry spans, token and cost accounting
   retry.py        retries with backoff for the LLM API and SEC
+  gate.py         CI regression gate against evals/baseline.json
   cli.py          `edgar` command
 tests/            offline unit tests (no API key needed)
 evals/
