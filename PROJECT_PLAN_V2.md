@@ -15,7 +15,7 @@ v2 turns EDGAR from "works on my eval" into "measured, gated and observable": a 
 
 ## Where v1 stands
 
-A working agent over 16 companies' latest 10-Ks: LanceDB + bge-small retrieval, XBRL facts, a calculator, and a DeepSeek function-calling loop capped at 6 LLM calls.
+A working agent over 15 companies' latest 10-Ks: LanceDB + bge-small retrieval, XBRL facts, a calculator, and a DeepSeek function-calling loop capped at 6 LLM calls.
 
 | Area | v1 today | v2 gap |
 |---|---|---|
