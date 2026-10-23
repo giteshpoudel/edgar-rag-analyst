@@ -1,0 +1,92 @@
+{
+  "reviewer": "Claude (read every candidate that passed mechanical checks; 2026-10-18)",
+  "reject": {
+    "long-006": "Boilerplate: 'internal control has inherent limitations' is in every 10-K; doesn't discriminate",
+    "long-011": "Boilerplate: management is responsible for internal control (every 10-K says this)",
+    "long-014": "Trivial: the evaluation date is just the fiscal year end",
+    "long-016": "Duplicate of long-001's 'controls effective' pattern; kept one",
+    "long-018": "Boilerplate list of internal-control functions, identical across filers",
+    "long-020": "Duplicate 'controls effective' pattern",
+    "long-021": "Duplicate 'disclosure controls effective' pattern; kept long-017",
+    "long-022": "Duplicate 'controls effective' pattern",
+    "long-023": "Duplicate 'reasonable assurance' pattern; kept long-010",
+    "long-024": "Boilerplate internal-control language",
+    "long-025": "Duplicate 'reasonable assurance' pattern",
+    "text-010": "Awkward: asks for the minimum of a reported range of pension assumptions",
+    "narr-012": "Circular: the question contains its own answer ('adverse customer reaction')",
+    "mult-006": "Not really multi-hop: two unrelated boilerplate statements stapled together",
+    "mult-013": "Not really multi-hop: two unrelated boilerplate statements stapled together",
+    "mult-017": "Not really multi-hop: product list plus a generic economic-conditions sentence",
+    "mult-005": "Unfair: Microsoft lists several areas requiring judgment; a correct answer can name other valid ones (found in the first v1 run)",
+    "hlt-005": "Boilerplate even when paraphrased: CEO and CFO responsible for internal controls",
+    "hlt-006": "Boilerplate even when paraphrased: disclosure controls effective (already covered by long-017)",
+    "wxco-002": "Muddled: mixes Lam's restructuring terminations (1,760) into a headcount comparison",
+    "wtab-003": "Year can't be confirmed: the per-share amount sits in the row label and the year columns are dashes",
+    "wtab-007": "From the exhibit index; the rate is written into the note's name"
+  },
+  "fix": {
+    "text-016": {
+      "expected_numbers": [
+        {
+          "value": 184670000,
+          "kind": "usd"
+        }
+      ],
+      "key_points": [
+        "Foreign current tax expense was $184.7 million (184,670 thousand) in fiscal 2025"
+      ],
+      "reason": "ADI's tables are in thousands ('all tabular amounts in thousands'); the draft recorded 184,670 dollars"
+    },
+    "narr-001": {
+      "expected_numbers": [],
+      "reason": "A year (2040) belongs in the key point, not number matching, where it could match other values"
+    },
+    "text-002": {
+      "key_points": [
+        "Amortization of acquired intangible assets was $749.7 million (749,662 thousand) in fiscal 2025"
+      ],
+      "reason": "State the unit in the key point; value already correct (tables in thousands, checked against XBRL revenue)"
+    },
+    "text-004": {
+      "key_points": [
+        "Interest expense was $284.4 million (284,440 thousand) in fiscal 2026"
+      ],
+      "reason": "State the unit in the key point"
+    },
+    "text-021": {
+      "key_points": [
+        "Deferred profit was $2.28 billion (2,279,168 thousand) as of June 28, 2026"
+      ],
+      "reason": "State the unit in the key point"
+    }
+  },
+  "spot_check": {
+    "reviewer": "Gitesh Poudel (project owner)",
+    "date": "2026-10-18",
+    "ids": [
+      "narr-005",
+      "mult-016",
+      "narr-013",
+      "narr-021",
+      "text-007",
+      "amb-005",
+      "hnum-008",
+      "mult-015",
+      "text-009",
+      "mult-021",
+      "long-010",
+      "long-002",
+      "text-004",
+      "mult-012",
+      "narr-009",
+      "amb-004",
+      "hnum-009",
+      "hnum-005",
+      "text-026",
+      "long-013"
+    ],
+    "verdict": "All 20 OK: questions clear and fair, answers look right.",
+    "caveat": "Not every number was re-verified by hand.",
+    "recorded_by": "Claude, from the reviewer's chat message (the file couldn't be edited over Remote Control)"
+  }
+}

@@ -42,6 +42,29 @@ class Sources:
         self.items.append(Source(n=n, kind=kind, label=label, ref=ref, url=url, score=score))
         return n
 
+    def cite(self, kind: str, label: str, ref: str, url: str, score: float | None = None) -> str:
+        """Add a source and return its citation marker for the tool's text, e.g. "[3]"."""
+        return f"[{self.add(kind, label, ref, url, score)}]"
+
+
+class StagedSources(Sources):
+    """Sources for one tool call that runs in parallel with others (W5).
+
+    If parallel calls numbered sources as they went, the numbers would depend on which call
+    finished first and change between runs. Instead each call's citations are placeholders
+    ("⟦1⟧") until commit(), which numbers them in the order the model requested the calls.
+    """
+
+    def cite(self, kind: str, label: str, ref: str, url: str, score: float | None = None) -> str:
+        return f"⟦{self.add(kind, label, ref, url, score)}⟧"
+
+    def commit(self, text: str, into: Sources) -> str:
+        """Add this call's sources to the question's list and put the final numbers in text."""
+        for s in self.items:
+            n = into.add(s.kind, s.label, s.ref, s.url, s.score)
+            text = text.replace(f"⟦{s.n}⟧", f"[{n}]")  # "⟦1⟧" can't match inside "⟦11⟧"
+        return text
+
 
 # --- Argument models (these become the JSON schemas the LLM sees) ---
 
@@ -100,8 +123,8 @@ def search_filings(args: SearchFilingsArgs, sources: Sources) -> str:
     for r in results:
         c = r.chunk
         label = f"{c.company} {c.form} ({c.report_date}), Item {c.item}. {c.section_title}"
-        n = sources.add("filing", label, c.chunk_id, c.source_url, score=r.score)
-        blocks.append(f"[{n}] {label}\n{c.text}")
+        cite = sources.cite("filing", label, c.chunk_id, c.source_url, score=r.score)
+        blocks.append(f"{cite} {label}\n{c.text}")
     return "\n\n".join(blocks)
 
 
@@ -111,10 +134,10 @@ def _facts(ticker: str) -> CompanyFacts:
     return CompanyFacts(ticker)
 
 
-def _cite_fact(fact: Fact, sources: Sources) -> int:
+def _cite_fact(fact: Fact, sources: Sources) -> str:
     label = f"SEC XBRL {fact.tag}, {fact.ticker} FY{fact.fiscal_year} ({fact.form} filed {fact.filed})"
     url = f"https://www.sec.gov/Archives/edgar/data/{fact.cik}/{fact.accession_number.replace('-', '')}/"
-    return sources.add("xbrl", label, f"{fact.accession_number}:{fact.tag}:{fact.period_end}", url)
+    return sources.cite("xbrl", label, f"{fact.accession_number}:{fact.tag}:{fact.period_end}", url)
 
 
 def find_company(args: FindCompanyArgs, sources: Sources) -> str:
@@ -159,7 +182,7 @@ def compare_metric(args: CompareMetricArgs, sources: Sources) -> str:
     lines = [f"{what}, highest first:"]
     for rank, (value, t, year, end, refs, derived) in enumerate(rows, 1):
         shown = f"{value:.2f}%" if args.divide_by else f"{value:,.2f}"
-        cites = "".join(f"[{n}]" for n in refs)
+        cites = "".join(refs)
         note = f" (derived {', '.join(derived)}: company reports no such line)" if derived else ""
         lines.append(f"{rank}. {t} FY{year} (year ended {end}): {shown} {cites}{note}")
     if missing:
@@ -174,12 +197,12 @@ def get_financial_metric(args: GetMetricArgs, sources: Sources) -> str:
         return f"ERROR: {e}"
     except ValueError as e:  # unknown ticker
         return f"ERROR: {e}"
-    n = _cite_fact(fact, sources)
+    cite = _cite_fact(fact, sources)
     period = f"{fact.period_start} to {fact.period_end}" if fact.period_start else f"as of {fact.period_end}"
     # The LLM only sees this text, so a derived value must be labelled here, not just in the source.
     derived = f" [{fact.label}]" if fact.tag.startswith("derived") else ""
     return (
-        f"[{n}] {fact.company} {fact.metric} FY{fact.fiscal_year} ({period}): "
+        f"{cite} {fact.company} {fact.metric} FY{fact.fiscal_year} ({period}): "
         f"{fact.value:,.2f} {fact.unit}{derived}"
     )
 

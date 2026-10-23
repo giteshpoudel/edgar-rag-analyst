@@ -29,3 +29,6 @@ chroma/
 
 # Eval run logs (results JSONL and summary.md are committed)
 evals/results/*.log
+
+# CI gate output (uploaded as a workflow artifact instead)
+evals/results/ci/

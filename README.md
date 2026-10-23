@@ -79,6 +79,73 @@ flowchart LR
 
 Full results per question are in [evals/results/](evals/results/). Run `edgar eval` to reproduce them. Results vary by a question or two between runs (one borderline narrative question passes in some runs and fails in others).
 
+## Tracing and cost
+
+Every question is recorded as an OpenTelemetry trace ([tracing.py](src/edgar_rag/tracing.py)): one span each for the agent, every LLM call (messages, tokens, cost), every tool call, retrieval (the passages returned, with scores), query embedding and the judge. Attribute names follow [OpenInference](https://github.com/Arize-ai/openinference), so [Arize Phoenix](https://github.com/Arize-ai/phoenix) shows them as a readable tree. Eval reports take cost and latency from the same spans, and each result row stores its `trace_id`.
+
+v2 dev + test set (140 questions), agent with hybrid search, one run:
+
+| Metric | Value |
+|---|---|
+| Pass rate | 96% (135/140) |
+| **Cost per question** | **$0.0012** ($1.23 per 1,000 questions) |
+| Judge cost per question (eval only) | $0.0009 |
+| Latency p50 / p95 | 3.7 s / 8.9 s |
+| LLM calls per question | 2.5 |
+| Share of time in LLM calls / retrieval | 94% / 5% |
+| Prompt tokens served from DeepSeek's cache | 73% |
+
+Costs use DeepSeek's list (peak) prices from the table in [config.py](src/edgar_rag/config.py); off-peak calls cost half. Most prompt tokens are the repeated system prompt and tool definitions, which DeepSeek bills at the cache-hit rate (50× cheaper than uncached input). That is why a multi-call agent costs about a tenth of a cent per question. The most expensive question (a five-call cross-company comparison) cost $0.0046.
+
+To view traces, run Phoenix in its own environment, then set `TRACING=phoenix`:
+
+```bash
+python3 -m venv ~/.venvs/phoenix && ~/.venvs/phoenix/bin/pip install arize-phoenix
+~/.venvs/phoenix/bin/phoenix serve          # UI at http://localhost:6006
+TRACING=phoenix edgar ask "How did NVIDIA's revenue change in fiscal 2025?"
+```
+
+`edgar ask` prints each answer's tokens, cost, time and trace id. With `TRACING=off` (the default) spans are still recorded in-process for the cost figures, just not exported.
+
+## Speed: concurrency, async and retries
+
+The eval runner and agent are async ([agent.py](src/edgar_rag/agent.py), [evaluation.py](src/edgar_rag/evaluation.py)): a semaphore caps how many questions are in flight, tool calls the model requests in the same turn run in parallel, and LLM and SEC requests retry timeouts, 429s and 5xx errors with jittered exponential backoff ([retry.py](src/edgar_rag/retry.py)). Each retry is an event on the trace.
+
+Full v2 dev + test run (140 questions), same machine, one run each:
+
+| Runner | Wall time | Pass rate |
+|---|---|---|
+| Before: threads, 4 workers | 259 s | 136/140 |
+| Async, 4 in flight | 291 s | 136/140 |
+| Threads, 16 workers (control) | 85 s | 137/140 |
+| **Async, 16 in flight (new default)** | **76 s** | 137/140 |
+
+**3.4× faster**, but almost all of it comes from running more questions at once, not from async itself. Traces show 94% of answer time is waiting on the LLM, and threads wait in parallel just as well. At equal concurrency async was no faster (291 s vs 259 s at 4; API speed varies between runs, so read that as no difference). Async's own gains are smaller: no thread per question, the tools of one model turn run together, and retries wait with `asyncio.sleep` without blocking other questions. Per-question latency is unchanged (p50 3.8 s), and so is cost.
+
+Citations stay deterministic with parallel tools: each call's sources are numbered after the batch finishes, in the order the model asked for them, not the order they finished. SEC requests share one process-wide throttle (under the 10 requests/second limit), however many clients or threads make them.
+
+## CI regression gate
+
+Every pull request runs two checks ([ci.yml](.github/workflows/ci.yml)):
+
+1. **Lint and unit tests**: ruff and 35 offline tests (no API key), covering XBRL fact selection, grounding, keyword-query handling, tracing and cost accounting, retries, parallel tool calls and the gate logic.
+2. **Eval gate** ([gate.py](src/edgar_rag/gate.py)): the 48-question v2 dev split, answered with the real model on a frozen, checksummed data snapshot (release [ci-data-v1](https://github.com/giteshpoudel/edgar-rag-analyst/releases/tag/ci-data-v1)), compared with [evals/baseline.json](evals/baseline.json). The score table goes to the job summary, and per-question results are kept as an artifact. The whole job takes about 1.5 minutes (34 s of it answering questions) and costs about $0.10.
+
+The baseline is 5 runs of the same code: 99.6% mean pass rate (one flip in 240 answers) and 100% number accuracy. The gate fails when:
+
+| Check | Rule | Threshold now |
+|---|---|---|
+| Pass rate | below the baseline mean by more than the widest run-to-run drop plus one question | < 95.8% (fails at 45/48) |
+| Number accuracy | any drop below the lowest baseline run | < 100% |
+| Run errors | any (retries absorb transient API errors, so an error means something broke) | > 0 |
+
+**Broken-PR demos.** Two deliberately broken pull requests, each a one-word change that passes ruff, show which layer catches which kind of bug:
+
+- [PR #3](https://github.com/giteshpoudel/edgar-rag-analyst/pull/3) **makes vector-only search the default.** The code is correct; it just answers worse. Unit tests pass. **The eval gate fails it**, on number accuracy (84–98% against a 100% floor; 95.5% in CI) and in one run on pass rate too. It failed in 6 of 6 runs (in CI, 2 local and 3 from W2).
+- [PR #2](https://github.com/giteshpoudel/edgar-rag-analyst/pull/2) **names fiscal years by the year they start in**, which shifts every figure by a year. In its first CI run **the eval gate passed it** (46/48, at the threshold). The agent read the period dates in tool output, noticed the wrong year and asked again; a local run failed, so the eval catches this bug only sometimes. The fix was a deterministic test, not a stricter eval: [test_xbrl.py](tests/test_xbrl.py) checks fiscal-year naming offline, and all 6 of its tests fail on this change.
+
+Lesson: **an agent can route around a broken component**, so end-to-end evals catch logic bugs poorly. A second experiment showed the same thing: cutting search results from 5 passages to 2 failed the gate in only 1 of 2 runs, because the agent searched more often. Logic belongs in unit tests and retrieval quality in the retrieval-only eval (recall@k); the eval gate guards answer quality.
+
 ## Scaling: the semiconductor pilot
 
 Adding 13 semiconductor companies tested whether the pipeline generalizes. `edgar ingest` runs download → chunk → index for a list of tickers and prints a **health report** per filing, because nobody reads 13 (or 500) filings by hand:
@@ -139,6 +206,8 @@ edgar ask "Rank the semiconductor companies by gross margin"
 edgar ask --simple "..."    # plain RAG, no tools (the eval baseline)
 edgar search "export controls" --ticker NVDA --item 1A   # retrieval only
 edgar eval                  # run the eval suite in both modes
+edgar eval --golden v2 --split dev,test --mode agent --concurrency 16
+edgar gate                  # the CI check: dev split vs evals/baseline.json
 ```
 
 ## Limitations
@@ -167,7 +236,11 @@ src/edgar_rag/
   prompts.py      system prompts
   scoring.py      number matching, retrieval metrics, LLM judge
   evaluation.py   eval runner and summary
+  tracing.py      OpenTelemetry spans, token and cost accounting
+  retry.py        retries with backoff for the LLM API and SEC
+  gate.py         CI regression gate against evals/baseline.json
   cli.py          `edgar` command
+tests/            offline unit tests (no API key needed)
 evals/
   golden.jsonl    58 labelled questions
   results/        per-question results and summary from the last run

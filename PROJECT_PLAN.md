@@ -157,11 +157,11 @@ edgar-rag-analyst/
 
 ## 7. Later (only after Phases 1–3 work)
 
-- Hybrid search (keyword + vector) and a reranker, with the lift measured by evals.
-- Regression gate: fail CI if eval scores drop.
-- Async, retries and token/cost tracking.
-- A small web UI (Streamlit or FastAPI).
-- Local LLM mode (Ollama) to run fully offline.
+- [x] Hybrid search (keyword + vector) and a reranker, with the lift measured by evals. *Done in v2 W2: hybrid is the default (+0.23 recall@5, +4.0 points); the reranker added nothing and stays off.*
+- [x] Regression gate: fail CI if eval scores drop. *Done in v2 W6: GitHub Actions eval gate against a measured baseline; main requires it.*
+- [x] Async, retries and token/cost tracking. *Done in v2 W4 (OpenTelemetry tracing, cost per question) and W5 (async, parallel tools, backoff).*
+- [ ] A small web UI (Streamlit or FastAPI).
+- [ ] Local LLM mode (Ollama) to run fully offline.
 
 ---
 

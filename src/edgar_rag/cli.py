@@ -110,10 +110,33 @@ def ask(
     item: str | None = typer.Option(None, help="(--simple) Only this section, e.g. 1A"),
 ) -> None:
     """Answer QUESTION from the filings, with citations."""
-    if simple:
-        _ask_simple(question, k, ticker, item)
-        return
+    import time
 
+    from edgar_rag import tracing
+
+    start = time.monotonic()
+    with tracing.span("ask", "CHAIN", **{"input.value": question, "edgar.simple": simple}):
+        trace_id = tracing.current_trace_id()
+        if simple:
+            _ask_simple(question, k, ticker, item)
+        else:
+            _ask_agent(question)
+    _print_usage(tracing.COLLECTOR.pop(trace_id), time.monotonic() - start, tracing.trace_id_hex(trace_id))
+
+
+def _print_usage(usage, seconds: float, trace_id: str) -> None:
+    cost = f"${usage.cost_usd:.4f}" if usage.cost_known else "cost unknown (model not in price table)"
+    llm = usage.seconds.get("LLM", 0.0)
+    typer.echo(
+        f"\n{usage.llm_calls} LLM calls · {usage.prompt_tokens:,} prompt ({usage.cached_prompt_tokens:,} cached) + "
+        f"{usage.completion_tokens:,} completion tokens ({usage.reasoning_tokens:,} reasoning)"
+    )
+    typer.echo(f"{cost} at list price · {seconds:.1f} s total, {llm:.1f} s in LLM calls")
+    if config.tracing() == "phoenix":
+        typer.echo(f"Trace {trace_id} in Phoenix ({config.phoenix_endpoint().removesuffix('/v1/traces')})")
+
+
+def _ask_agent(question: str) -> None:
     from edgar_rag.agent import ask as run_agent
 
     result = run_agent(question)
@@ -134,41 +157,257 @@ def ask(
     typer.echo("  (* = cited in the answer)")
     if result.invalid_citations:
         typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
-    typer.echo(
-        f"\n{result.steps} LLM calls · {result.prompt_tokens} prompt + "
-        f"{result.completion_tokens} completion tokens"
-    )
+
+
+def _load_items(golden: str, split: str | None, only: str | None):
+    from edgar_rag import evaluation
+
+    if golden not in evaluation.GOLDEN_SETS:
+        raise typer.BadParameter(f"golden must be one of {', '.join(evaluation.GOLDEN_SETS)}")
+    items = evaluation.load_golden(evaluation.GOLDEN_SETS[golden])
+    if split:
+        items = [i for i in items if i.split in split.split(",")]
+    if only:
+        wanted = set(only.split(","))
+        items = [i for i in items if i.id in wanted]
+    return items
 
 
 @app.command(name="eval")
 def run_eval(
     mode: str = typer.Option("both", help="agent, simple, or both"),
+    golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (198)"),
+    split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
     only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
-    workers: int = typer.Option(4, help="Questions answered in parallel"),
+    workers: int = typer.Option(16, "--concurrency", "--workers", help="Questions in flight at once"),
+    repeat: int = typer.Option(1, help="Runs per mode; >1 reports mean, range and flip rate"),
 ) -> None:
-    """Run the golden question set, score it, and write evals/results/."""
+    """Run a golden question set, score it, and write the results."""
     from edgar_rag import evaluation
 
-    items = evaluation.load_golden()
-    if only:
-        wanted = set(only.split(","))
-        items = [i for i in items if i.id in wanted]
+    items = _load_items(golden, split, only)
     modes = ["agent", "simple"] if mode == "both" else [mode]
+    out_dir = evaluation.results_dir(golden)
+    tag = f"_{split.replace(',', '+')}" if split else ""
+    # Name results after a non-default retrieval config, so runs never overwrite the baseline.
+    retrieval = config.retrieval_mode() + ("+" + config.reranker() if config.reranker() != "none" else "")
+    if retrieval != "hybrid":  # the default since W2; v1-style results are tagged "_vector"
+        tag += f"_{retrieval}"
+    if config.grounding_guard() == "off":  # the guard is on by default since W3
+        tag += "_noguard"
+    typer.echo(f"Retrieval: {retrieval}")
+    if repeat > 1:
+        _repeat_runs(modes, items, workers, repeat, out_dir, tag)
+        return
 
-    summaries = {}
+    import time
+
+    summaries, timings = {}, {}
     for m in modes:
         typer.echo(f"Running {len(items)} questions in {m} mode...")
+        started = time.monotonic()
         records = evaluation.run(m, items, workers=workers)
-        path = evaluation.save(records, m)
+        wall = time.monotonic() - started
+        path = evaluation.save(records, m, out_dir, tag)
         summaries[m] = evaluation.summarize(records)
+        timings[m] = f"{wall:.0f} s wall time at concurrency {workers}"
+        typer.echo(f"  {timings[m]} ({len(records) / wall * 60:.0f} questions/minute)")
         failed = [r.id for r in records if not r.passed]
         typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · saved {path}")
         if failed:
             typer.echo(f"  failed: {', '.join(failed)}")
 
-    table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model())
+    table = evaluation.summary_markdown(summaries, config.llm_model(), config.judge_model(),
+                                        "; ".join(f"{m}: {s}" for m, s in timings.items()))
     if not only:  # partial runs don't overwrite the committed summary
-        (evaluation.EVALS_DIR / "results" / "summary.md").write_text(table)
+        (out_dir / f"summary{tag}.md").write_text(table)
+    typer.echo("\n" + table)
+
+
+def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
+    import json
+    import time
+
+    from edgar_rag import evaluation
+    from edgar_rag.stats import summarize_runs
+
+    for m in modes:
+        runs, pooled = [], []
+        for k in range(1, repeat + 1):
+            typer.echo(f"{m} run {k}/{repeat}: {len(items)} questions...")
+            started = time.monotonic()
+            records = evaluation.run(m, items, workers=workers)
+            wall = time.monotonic() - started
+            evaluation.save(records, m, out_dir, f"{tag}_run{k}")
+            runs.append([json.loads(r.model_dump_json()) for r in records])
+            pooled += records
+            typer.echo(f"  {sum(r.passed for r in records)}/{len(records)} passed · {wall:.0f} s wall · "
+                       f"{evaluation.cost_line(records)}")
+        s = summarize_runs(runs)
+        typer.echo(
+            f"{m}: mean {s.mean:.1%} (range {s.low:.1%}-{s.high:.1%}) over {s.runs} runs; "
+            f"{s.flip_rate:.1%} of questions changed result between runs"
+        )
+        typer.echo(f"  all runs: {evaluation.cost_line(pooled)}")
+        report = {**s.model_dump(), **evaluation.cost_and_latency(pooled)}
+        (out_dir / f"{m}{tag}_runs.json").write_text(json.dumps(report, indent=2))
+
+
+@app.command()
+def compare(
+    a: str = typer.Argument(..., help="Result files for config A, a glob such as 'agent_dev+test_run*'"),
+    b: str = typer.Argument(..., help="Result files for config B"),
+    golden: str = typer.Option("v2", help="Which results folder"),
+    split: str | None = typer.Option(None, help="Only these splits (dev, test, ...)"),
+) -> None:
+    """Paired bootstrap 95% CI for the pass-rate difference B - A."""
+    import json
+
+    from edgar_rag import evaluation
+    from edgar_rag.stats import paired_bootstrap, summarize_runs
+
+    out_dir = evaluation.results_dir(golden)
+    keep = None
+    if split:
+        keep = {i.id for i in _load_items(golden, split, None)}
+
+    def load(pattern):
+        files = sorted(out_dir.glob(pattern + ("" if pattern.endswith(".jsonl") else ".jsonl")))
+        if not files:
+            raise typer.BadParameter(f"no result files match {pattern} in {out_dir}")
+        runs = [[json.loads(line) for line in f.read_text().splitlines() if line] for f in files]
+        return [[r for r in run if keep is None or r["id"] in keep] for run in runs], files
+
+    runs_a, files_a = load(a)
+    runs_b, files_b = load(b)
+    for name, runs, files in (("A", runs_a, files_a), ("B", runs_b, files_b)):
+        s = summarize_runs(runs)
+        records = [evaluation.Record.model_validate(r) for run in runs for r in run]
+        typer.echo(f"{name}: {', '.join(f.name for f in files)}: mean {s.mean:.1%} "
+                   f"(range {s.low:.1%}-{s.high:.1%}), flip rate {s.flip_rate:.1%} · "
+                   f"{evaluation.cost_line(records)}")
+    c = paired_bootstrap(runs_a, runs_b)
+    verdict = "significant" if c.significant else "not significant (could be noise)"
+    typer.echo(f"B - A = {c.diff:+.1%}, 95% CI [{c.ci_low:+.1%}, {c.ci_high:+.1%}] over {c.questions} questions: {verdict}")
+
+
+@app.command(name="make-baseline")
+def make_baseline(
+    runs: str = typer.Argument(..., help="Repeat-run result files, a glob such as 'agent_dev_run*'"),
+    golden: str = typer.Option("v2", help="Which results folder"),
+    split: str = typer.Option("dev", help="The split those runs cover (the gate's smoke set)"),
+) -> None:
+    """Build evals/baseline.json for the CI gate from repeated runs of the same code."""
+    from edgar_rag import evaluation, gate
+
+    files = sorted(evaluation.results_dir(golden).glob(runs + ("" if runs.endswith(".jsonl") else ".jsonl")))
+    if len(files) < 3:
+        raise typer.BadParameter("need at least 3 runs to measure run-to-run spread")
+    loaded = [[evaluation.Record.model_validate_json(line) for line in f.read_text().splitlines() if line]
+              for f in files]
+    cfg = {"model": config.llm_model(), "judge": config.judge_model(),
+           "retrieval": config.retrieval_mode(), "reranker": config.reranker(),
+           "grounding_guard": config.grounding_guard(), "files": [f.name for f in files]}
+    baseline = gate.make_baseline(loaded, golden, split, cfg)
+    gate.save_baseline(baseline)
+    typer.echo(f"Wrote {gate.BASELINE_PATH}: pass rate {baseline.pass_rate:.1%} over {baseline.runs} runs "
+               f"{[f'{r:.1%}' for r in baseline.pass_rates]}, tolerance {baseline.tolerance:.1%}, "
+               f"number accuracy floor {baseline.number_accuracy_floor:.1%}")
+
+
+@app.command(name="gate")
+def run_gate(
+    concurrency: int = typer.Option(16, help="Questions in flight at once"),
+    out: str = typer.Option("evals/results/ci", help="Where to save this run's records"),
+) -> None:
+    """Run the smoke set and compare with evals/baseline.json; exit 1 if it regressed (CI)."""
+    import os
+    from pathlib import Path
+
+    from edgar_rag import evaluation, gate
+
+    baseline = gate.load_baseline()
+    items = _load_items(baseline.golden, baseline.split, None)
+    if len(items) != baseline.questions:
+        typer.echo(f"Note: smoke set has {len(items)} questions, baseline was built on {baseline.questions}")
+    records = evaluation.run("agent", items, workers=concurrency)
+    evaluation.save(records, "agent", Path(out), "_gate")
+    result = gate.check(records, baseline)
+    report = gate.markdown(result, baseline, records)
+    typer.echo(report)
+    summary = os.getenv("GITHUB_STEP_SUMMARY")  # GitHub Actions shows this file on the run page
+    if summary:
+        with open(summary, "a") as f:
+            f.write(report)
+    raise typer.Exit(0 if result.passed else 1)
+
+
+@app.command(name="retrieval-eval")
+def run_retrieval_eval(
+    golden: str = typer.Option("v2", help="Question set with evidence quotes"),
+    split: str | None = typer.Option(None, help="dev, test, regression (comma-separated)"),
+    configs: str = typer.Option(
+        "vector", help="Comma-separated: vector, keyword, hybrid, each optionally +minilm or +bge"
+    ),
+    by_category: bool = typer.Option(False, help="Also break each config down by category"),
+) -> None:
+    """Retrieval only (no LLM): recall@5/10/20, MRR and latency against the gold evidence."""
+    from edgar_rag import evaluation
+
+    items = _load_items(golden, split, None)
+
+    def mean(xs):
+        return sum(xs) / len(xs) if xs else 0.0
+
+    def pct(xs, q):
+        xs = sorted(xs)
+        return xs[min(len(xs) - 1, int(q * len(xs)))]
+
+    from edgar_rag.stats import bootstrap_scores
+
+    rows, per_config = [], {}
+    for cfg in [c.strip() for c in configs.split(",") if c.strip()]:
+        mode, _, reranker = cfg.partition("+")
+        recs = evaluation.retrieval_eval(items, mode=mode, reranker=reranker or "none")
+        per_config[cfg] = recs
+        if not recs:
+            typer.echo("No questions with evidence quotes in this selection.")
+            return
+        secs = [r.seconds for r in recs]
+        rows.append((cfg, len(recs), mean([r.recall[5] for r in recs]), mean([r.recall[10] for r in recs]),
+                     mean([r.recall[20] for r in recs]), mean([r.reciprocal_rank for r in recs]),
+                     pct(secs, 0.5) * 1000, pct(secs, 0.95) * 1000))
+        typer.echo(f"  done: {cfg}")
+        if by_category:
+            cats: dict[str, list] = {}
+            for r in recs:
+                cats.setdefault(r.category, []).append(r)
+            for cat, rs in sorted(cats.items()):
+                typer.echo(f"    {cat:13} n={len(rs):>2} R@5 {mean([r.recall[5] for r in rs]):.2f} "
+                           f"R@10 {mean([r.recall[10] for r in rs]):.2f} MRR {mean([r.reciprocal_rank for r in rs]):.2f}")
+
+    lines = [f"Retrieval ablation ({golden}, split: {split or 'all'}, {rows[0][1]} questions with gold evidence)", "",
+             "| Config | R@5 | R@10 | R@20 | MRR | p50 ms | p95 ms |", "|---|---|---|---|---|---|---|"]
+    for cfg, _, r5, r10, r20, mrr, p50, p95 in rows:
+        lines.append(f"| {cfg} | {r5:.3f} | {r10:.3f} | {r20:.3f} | {mrr:.3f} | {p50:.0f} | {p95:.0f} |")
+    # Paired bootstrap CIs against the first config (the baseline), per question.
+    base_name = rows[0][0]
+    base = per_config[base_name]
+    lines += ["", f"Change vs {base_name} (paired bootstrap 95% CI over questions):", "",
+              "| Config | ΔR@5 | ΔMRR |", "|---|---|---|"]
+    for cfg, recs in list(per_config.items())[1:]:
+        cells = []
+        for key in ("r5", "mrr"):
+            def score(rs, key=key):
+                return {r.id: (r.recall[5] if key == "r5" else r.reciprocal_rank) for r in rs}
+            c = bootstrap_scores(score(base), score(recs))
+            mark = " *" if c.significant else ""
+            cells.append(f"{c.diff:+.3f} [{c.ci_low:+.3f}, {c.ci_high:+.3f}]{mark}")
+        lines.append(f"| {cfg} | {cells[0]} | {cells[1]} |")
+    lines += ["", "* = the CI excludes 0"]
+    table = "\n".join(lines) + "\n"
+    out = evaluation.results_dir(golden) / f"retrieval_{(split or 'all').replace(',', '+')}.md"
+    out.write_text(table)
     typer.echo("\n" + table)
 
 
@@ -188,10 +427,6 @@ def _ask_simple(question: str, k: int, ticker: str | None, item: str | None) -> 
     typer.echo("  (* = cited in the answer)")
     if result.invalid_citations:
         typer.echo(f"  WARNING: answer cites sources that don't exist: {result.invalid_citations}")
-    typer.echo(
-        f"\n{result.llm.model} · {result.llm.prompt_tokens} prompt + "
-        f"{result.llm.completion_tokens} completion tokens"
-    )
 
 
 if __name__ == "__main__":
