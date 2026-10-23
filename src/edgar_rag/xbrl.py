@@ -111,13 +111,14 @@ class CompanyFacts:
     def _fiscal_year_ends(self) -> dict[int, str]:
         """Map fiscal year -> its last day, using annual periods of common income tags.
 
-        A fiscal year is named by the calendar year it ends in (Apple FY2025 ends 2025-09-27).
+        A fiscal year is named by the calendar year it starts in, the year most of it falls in
+        (NVIDIA's year ending 2026-01-25 is mostly 2025, so it maps to 2025).
         """
         ends: dict[int, str] = {}
         for tag in [*METRICS["net_income"][0], *METRICS["revenue"][0]]:
             for f in self._annual_facts(tag, "USD"):
                 if _is_annual(f):
-                    ends.setdefault(int(f["end"][:4]), f["end"])
+                    ends.setdefault(int(f["start"][:4]), f["end"])
         return ends
 
     def available_years(self, metric: str) -> list[int]:
