@@ -1,0 +1,14 @@
+# gcloud run deploy --source uploads this folder to Cloud Build. When this file exists, gcloud
+# no longer reads .gitignore, so everything sensitive or large is listed here explicitly.
+.gcloudignore
+.env
+.env.*
+.venv/
+venv/
+data/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.git/
+*.tar.gz
+evals/results/

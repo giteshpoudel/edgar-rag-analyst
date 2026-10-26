@@ -15,7 +15,7 @@ from edgar_rag import companies, config, tracing
 from edgar_rag.answer import parse_citations
 from edgar_rag.grounding import check as check_grounding
 from edgar_rag.llm import acomplete
-from edgar_rag.prompts import AGENT_SYSTEM
+from edgar_rag.prompts import AGENT_SYSTEM, DEMO_RULES
 from edgar_rag.tools import TOOLS, Source, Sources, StagedSources
 
 MAX_STEPS = 6  # LLM calls per question; stops runaway loops
@@ -36,6 +36,18 @@ FINAL_STEP_NUDGE = (
 )
 # Tool-call syntax the model sometimes writes into its text instead of a structured call.
 TOOL_MARKUP_RE = re.compile(r"DSML|<｜|invoke name=|</?tool_call", re.IGNORECASE)
+
+
+class TokenBudget:
+    """Prompt + completion tokens one question may spend (None = unlimited). When it runs out,
+    the next model call is the final one: tools off, answer from what it has."""
+
+    def __init__(self, limit: int | None) -> None:
+        self.limit, self.used = limit, 0
+
+    @property
+    def exhausted(self) -> bool:
+        return self.limit is not None and self.used >= self.limit
 
 
 class ToolCall(BaseModel):
@@ -129,14 +141,15 @@ async def _run_tools(tool_calls_requested, sources: Sources, step: int) -> list[
 
 
 async def _loop(messages: list[dict], schemas: list[dict], sources: Sources, tool_calls: list[ToolCall],
-                max_steps: int, first_step: int = 1) -> tuple[str, bool, int, int, int]:
+                max_steps: int, first_step: int = 1,
+                budget: TokenBudget | None = None) -> tuple[str, bool, int, int, int]:
     """Call the LLM and run the tools it asks for, until it answers or hits max_steps.
     Returns (text, truncated, last step number, prompt tokens, completion tokens)."""
     prompt_tokens = completion_tokens = 0
     text, truncated, step = "", False, first_step
     for i in range(max_steps):
         step = first_step + i
-        last = i == max_steps - 1
+        last = i == max_steps - 1 or (i > 0 and budget is not None and budget.exhausted)
         if last:
             # Force an answer. Removing the tools entirely made the model write tool calls out
             # as text (seen in evals), so keep them listed but disallow calling them.
@@ -145,6 +158,8 @@ async def _loop(messages: list[dict], schemas: list[dict], sources: Sources, too
         if response.usage:
             prompt_tokens += response.usage.prompt_tokens
             completion_tokens += response.usage.completion_tokens
+            if budget is not None:
+                budget.used += response.usage.prompt_tokens + response.usage.completion_tokens
         message = response.choices[0].message
 
         if not message.tool_calls or last:
@@ -190,16 +205,21 @@ async def _ask(question: str) -> AgentAnswer:
     sources = Sources()
     tool_calls: list[ToolCall] = []
     schemas = [t.schema_for_llm() for t in TOOLS.values()]
+    system = AGENT_SYSTEM.format(companies=available_companies())
+    if config.demo_mode():
+        system += DEMO_RULES
     messages: list[dict] = [
-        {"role": "system", "content": AGENT_SYSTEM.format(companies=available_companies())},
+        {"role": "system", "content": system},
         {"role": "user", "content": question},
     ]
-    text, truncated, step, prompt_tokens, completion_tokens = await _loop(messages, schemas, sources, tool_calls, MAX_STEPS)
+    budget = TokenBudget(config.request_token_budget())
+    text, truncated, step, prompt_tokens, completion_tokens = await _loop(
+        messages, schemas, sources, tool_calls, MAX_STEPS, budget=budget)
 
     # Number grounding guard (W3): if the answer states numbers no tool result supports, give the
     # model one repair pass, with tools, to source or remove them.
     unsupported_before: list[str] = []
-    if config.grounding_guard() == "on" and text and not TOOL_MARKUP_RE.search(text):
+    if config.grounding_guard() == "on" and text and not TOOL_MARKUP_RE.search(text) and not budget.exhausted:
         with tracing.span("grounding.check", "CHAIN", **{"input.value": text}) as span:
             report = check_grounding(text, "\n".join(c.result for c in tool_calls), question)
             unsupported_before = [c.raw for c in report.unsupported]
@@ -209,7 +229,7 @@ async def _ask(question: str) -> AgentAnswer:
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": REPAIR_PROMPT.format(numbers=", ".join(unsupported_before))})
             repaired, truncated, step, p_tok, c_tok = await _loop(
-                messages, schemas, sources, tool_calls, REPAIR_STEPS, first_step=step + 1
+                messages, schemas, sources, tool_calls, REPAIR_STEPS, first_step=step + 1, budget=budget
             )
             prompt_tokens += p_tok
             completion_tokens += c_tok

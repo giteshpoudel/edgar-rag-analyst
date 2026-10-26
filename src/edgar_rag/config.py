@@ -112,3 +112,27 @@ def tracing() -> str:
 
 def phoenix_endpoint() -> str:
     return os.getenv("PHOENIX_ENDPOINT", "http://localhost:6006/v1/traces")
+
+
+# --- Public demo (website backend) ----------------------------------------------------------
+
+
+def demo_mode() -> bool:
+    """DEMO_MODE=1 for the public demo server: tools only touch the 15 indexed companies, no
+    live SEC requests (cached data only), extra prompt rules and a per-request token budget.
+    Off by default so the CLI, evals and CI gate behave exactly as before."""
+    return _choice("DEMO_MODE", "0", ("0", "1")) == "1"
+
+
+def request_token_budget() -> int | None:
+    """Most prompt + completion tokens one question may use before the agent must answer.
+    Default 100,000 in demo mode (eval p99 was ~53,000, max ~79,000), none otherwise."""
+    raw = os.getenv("REQUEST_TOKEN_BUDGET", "").strip()
+    if raw:
+        return int(raw)
+    return 100_000 if demo_mode() else None
+
+
+def api_secret() -> str | None:
+    """Bearer secret the website sends; the server refuses every /ask call when it's unset."""
+    return os.getenv("EDGAR_API_SECRET", "").strip() or None

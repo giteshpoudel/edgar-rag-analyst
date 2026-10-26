@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
+server = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]  # the website demo API (server.py)
 
 [project.scripts]
 edgar = "edgar_rag.cli:app"

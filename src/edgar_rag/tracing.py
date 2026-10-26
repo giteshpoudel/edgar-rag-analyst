@@ -27,7 +27,7 @@ from functools import lru_cache
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, SpanLimits, SpanProcessor, TracerProvider
 from opentelemetry.trace import Span, Status, StatusCode
 
 from edgar_rag import config
@@ -35,6 +35,7 @@ from edgar_rag import config
 KIND = "openinference.span.kind"
 PROJECT = "edgar-rag-analyst"
 MAX_TEXT = 20_000  # characters per attribute: long tool results are cut so traces stay small
+MAX_ATTRIBUTES = 4096  # per span; see _provider
 JUDGE_SPAN = "judge"  # LLM spans with this name are eval cost, not the system's cost
 
 
@@ -123,7 +124,12 @@ def _provider() -> TracerProvider:
     # Our own provider rather than the global one, so importing this never changes tracing for
     # other libraries in the process.
     provider = TracerProvider(
-        resource=Resource.create({"service.name": PROJECT, "openinference.project.name": PROJECT})
+        resource=Resource.create({"service.name": PROJECT, "openinference.project.name": PROJECT}),
+        # The default limit is 128 attributes per span, and past it the OLDEST are dropped: in a
+        # long agent conversation (each message adds 2-4 attributes) that was the span kind, so
+        # the collector stopped counting the call's tokens and cost. Long values are already
+        # cut to MAX_TEXT, so a high count stays small.
+        span_limits=SpanLimits(max_span_attributes=MAX_ATTRIBUTES),
     )
     provider.add_span_processor(COLLECTOR)
     if config.tracing() == "phoenix":

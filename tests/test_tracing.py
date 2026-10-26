@@ -102,3 +102,17 @@ def test_percentile_interpolates():
     assert percentile([1, 2, 3, 4], 50) == 2.5
     assert percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 95) == pytest.approx(9.55)
     assert percentile([], 50) is None
+
+
+def test_long_conversations_keep_the_span_kind_and_cost(spans):
+    # 100 messages is ~200+ attributes, past OpenTelemetry's default limit of 128, which used to
+    # drop the span kind (the oldest attribute) and with it the call's cost from the totals.
+    messages = [{"role": "user" if i % 2 else "assistant", "content": f"m{i}"} for i in range(100)]
+    with tracing.span("q", "CHAIN"):
+        trace_id = tracing.current_trace_id()
+        llm.complete(messages, model="deepseek-flash")
+    (span,) = [s for s in spans.get_finished_spans() if s.name == "llm"]
+    assert span.attributes["openinference.span.kind"] == "LLM"
+    assert span.attributes["llm.input_messages.0.message.content"] == "m0"
+    usage = tracing.COLLECTOR.pop(trace_id)
+    assert usage.llm_calls == 1 and usage.cost_usd > 0
