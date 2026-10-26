@@ -36,6 +36,10 @@ def _wait_turn() -> None:
         _last_request = time.monotonic()
 
 
+class OfflineError(RuntimeError):
+    """A request that would need the network while live SEC access is disabled."""
+
+
 class Filing(BaseModel):
     """Metadata for one filing. Saved next to the downloaded document."""
 
@@ -79,6 +83,12 @@ class SecClient:
     def _get(self, url: str) -> httpx.Response:
         """GET with the shared throttle, retrying timeouts, 429s and 5xx with backoff (the SEC
         answers 429 or 503 when it thinks a client is going too fast)."""
+
+        if config.demo_mode():
+            # The public demo serves only the frozen snapshot: a cache miss must never turn a
+            # visitor's question into an SEC download (the agent did fetch TSMC and ASML facts
+            # during an eval when asked about companies that aren't indexed).
+            raise OfflineError(f"no cached copy of {url} and live SEC requests are off in demo mode")
 
         def attempt() -> httpx.Response:
             _wait_turn()

@@ -33,9 +33,9 @@ jobs:
       - name: Install (CPU-only torch, ~200 MB instead of ~2.5 GB of CUDA wheels)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev]"
+          pip install -e ".[dev,server]"
       - run: ruff check src tests
-      - name: Unit tests (offline, no API key)
+      - name: Unit tests, including the demo API server (offline, no API key)
         run: pytest -q tests
 
   eval-gate:

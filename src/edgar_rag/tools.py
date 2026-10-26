@@ -10,8 +10,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from edgar_rag import companies
+from edgar_rag import companies, config
 from edgar_rag.retriever import search
+from edgar_rag.sec_client import OfflineError
 from edgar_rag.xbrl import METRICS, PUBLIC_METRICS, CompanyFacts, Fact, FactNotFound
 
 MetricName = Literal[tuple(PUBLIC_METRICS)]  # type: ignore[valid-type]
@@ -115,7 +116,21 @@ class CalculateArgs(BaseModel):
 # --- Implementations: take validated args, return text for the LLM ---
 
 
+def _not_allowed(ticker: str | None) -> str | None:
+    """In demo mode, an ERROR for any ticker outside the indexed companies (None if allowed)."""
+    if ticker is None or not config.demo_mode():
+        return None
+    indexed = {c.ticker for c in companies.indexed_companies()}
+    if ticker.upper() in indexed:
+        return None
+    return (f"ERROR: {ticker.upper()} is not one of the indexed companies. "
+            f"Available: {', '.join(sorted(indexed))}.")
+
+
+
 def search_filings(args: SearchFilingsArgs, sources: Sources) -> str:
+    if error := _not_allowed(args.ticker):
+        return error
     results = search(args.query, k=5, ticker=args.ticker, item=args.item)
     if not results:
         return "No matching passages."
@@ -155,6 +170,9 @@ def compare_metric(args: CompareMetricArgs, sources: Sources) -> str:
     latest = {c.ticker: c.fiscal_year for c in companies.indexed_companies()}
     rows, missing = [], []
     for t in tickers:
+        if _not_allowed(t):
+            missing.append(f"{t} (not indexed)")
+            continue
         year = args.fiscal_year or latest.get(t)
         if year is None:
             missing.append(f"{t} (not indexed)")
@@ -174,7 +192,7 @@ def compare_metric(args: CompareMetricArgs, sources: Sources) -> str:
                     continue
                 value = fact.value / denom.value * 100
             rows.append((value, t, year, fact.period_end, refs, derived))
-        except (FactNotFound, ValueError) as e:
+        except (FactNotFound, ValueError, OfflineError) as e:
             missing.append(f"{t} ({e})")
 
     rows.sort(key=lambda r: r[0], reverse=True)
@@ -191,12 +209,16 @@ def compare_metric(args: CompareMetricArgs, sources: Sources) -> str:
 
 
 def get_financial_metric(args: GetMetricArgs, sources: Sources) -> str:
+    if error := _not_allowed(args.ticker):
+        return error
     try:
         fact = _facts(args.ticker.upper()).get(args.metric, args.fiscal_year)
     except FactNotFound as e:
         return f"ERROR: {e}"
     except ValueError as e:  # unknown ticker
         return f"ERROR: {e}"
+    except OfflineError:
+        return f"ERROR: no data for {args.ticker.upper()} (live SEC access is off)."
     cite = _cite_fact(fact, sources)
     period = f"{fact.period_start} to {fact.period_end}" if fact.period_start else f"as of {fact.period_end}"
     # The LLM only sees this text, so a derived value must be labelled here, not just in the source.

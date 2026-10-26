@@ -1,0 +1,19 @@
+# Secrets: never in the image or the upload
+.env
+.env.*
+# Local environments, caches and data (the image fetches the frozen snapshot itself)
+.venv/
+venv/
+data/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.git/
+.github/
+*.tar.gz
+# Eval results and notes are not needed at runtime; only the data checksum is
+evals/
+!evals/ci-data.sha256
+tests/
+*.md
+!README.md
