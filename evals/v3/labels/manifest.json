@@ -1,0 +1,161 @@
+{
+  "pairs": [
+    {
+      "ticker": "NVDA",
+      "later_year": 2026,
+      "split": "dev",
+      "share": 0.25,
+      "seed": 3,
+      "years": {
+        "2026": {
+          "pack": "data/v3/label_packs/NVDA_2026.md",
+          "labels": "evals/v3/labels/NVDA_2026.csv",
+          "accession": "0001045810-26-000021",
+          "blocks": 60,
+          "chosen": [
+            3,
+            9,
+            16,
+            19,
+            20,
+            21,
+            24,
+            31,
+            35,
+            37,
+            43,
+            44,
+            45,
+            52,
+            54
+          ],
+          "words": 6365,
+          "all_words": 22315
+        },
+        "2025": {
+          "pack": "data/v3/label_packs/NVDA_2025.md",
+          "labels": "evals/v3/labels/NVDA_2025.csv",
+          "accession": "0001045810-25-000023",
+          "blocks": 65,
+          "chosen": [
+            3,
+            9,
+            16,
+            18,
+            19,
+            22,
+            27,
+            34,
+            46,
+            48,
+            61
+          ],
+          "words": 4358,
+          "all_words": 22372
+        }
+      }
+    },
+    {
+      "ticker": "AAPL",
+      "later_year": 2025,
+      "split": "dev",
+      "share": 0.25,
+      "seed": 3,
+      "years": {
+        "2025": {
+          "pack": "data/v3/label_packs/AAPL_2025.md",
+          "labels": "evals/v3/labels/AAPL_2025.csv",
+          "accession": "0000320193-25-000079",
+          "blocks": 47,
+          "chosen": [
+            5,
+            8,
+            12,
+            16,
+            18,
+            19,
+            20,
+            29,
+            31,
+            33,
+            44,
+            47
+          ],
+          "words": 3011,
+          "all_words": 12454
+        },
+        "2024": {
+          "pack": "data/v3/label_packs/AAPL_2024.md",
+          "labels": "evals/v3/labels/AAPL_2024.csv",
+          "accession": "0000320193-24-000123",
+          "blocks": 49,
+          "chosen": [
+            5,
+            8,
+            12,
+            18,
+            21,
+            22,
+            34,
+            36,
+            45,
+            49
+          ],
+          "words": 2555,
+          "all_words": 12222
+        }
+      }
+    },
+    {
+      "ticker": "AMAT",
+      "later_year": 2025,
+      "split": "test",
+      "share": 0.25,
+      "seed": 3,
+      "years": {
+        "2025": {
+          "pack": "data/v3/label_packs/AMAT_2025.md",
+          "labels": "evals/v3/labels/AMAT_2025.csv",
+          "accession": "0001628280-25-056742",
+          "blocks": 49,
+          "chosen": [
+            5,
+            8,
+            12,
+            16,
+            18,
+            19,
+            20,
+            30,
+            32,
+            38,
+            45,
+            48
+          ],
+          "words": 4594,
+          "all_words": 16100
+        },
+        "2024": {
+          "pack": "data/v3/label_packs/AMAT_2024.md",
+          "labels": "evals/v3/labels/AMAT_2024.csv",
+          "accession": "0000006951-24-000044",
+          "blocks": 50,
+          "chosen": [
+            7,
+            10,
+            16,
+            18,
+            19,
+            30,
+            32,
+            38,
+            45,
+            49
+          ],
+          "words": 4075,
+          "all_words": 16493
+        }
+      }
+    }
+  ]
+}

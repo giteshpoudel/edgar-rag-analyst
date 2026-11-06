@@ -27,7 +27,10 @@ COPY --chown=app scripts/fetch_ci_data.py scripts/
 COPY --chown=app evals/ci-data.sha256 evals/
 RUN python scripts/fetch_ci_data.py --dest /app
 
+# EDGAR_LEDGER=off: the v3 cost ledger is for local runs. The demo has its own per-question caps,
+# and its files are read-only for the non-root user.
 ENV DEMO_MODE=1 \
+    EDGAR_LEDGER=off \
     RETRIEVAL_MODE=hybrid \
     RERANKER=none \
     TRACING=off \

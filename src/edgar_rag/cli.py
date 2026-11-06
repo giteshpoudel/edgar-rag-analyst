@@ -1,5 +1,7 @@
 """Command-line interface: `edgar <command>`."""
 
+from pathlib import Path
+
 import typer
 
 from edgar_rag import config
@@ -68,6 +70,38 @@ def ingest(tickers: str = typer.Argument(..., help="Comma-separated, e.g. AMD,IN
             f"{h.metrics_found:>4}/{h.metrics_found + len(h.metrics_missing):<2}  {status}"
         )
     typer.echo(f"\n{sum(h.ok for h in results)}/{len(results)} filings passed all checks")
+
+
+@app.command(name="ingest-multi")
+def ingest_multi(
+    tickers: str = typer.Argument("all", help="Comma-separated, or 'all' for every v2 company"),
+    years: int = typer.Option(5, help="Fiscal years per company, ending at the 10-K v2 indexed"),
+    report: str = typer.Option("evals/results/v3/ingest_health.md", help="Where to write the health report"),
+) -> None:
+    """v3: index several years of 10-Ks per company into chunks_multi (v2's table is untouched)."""
+    from pathlib import Path
+
+    from edgar_rag import companies
+    from edgar_rag.pipeline import ingest_years
+
+    names = ([c.ticker for c in companies.indexed_companies()] if tickers == "all"
+             else [t.strip().upper() for t in tickers.split(",") if t.strip()])
+    results = ingest_years(names, years)
+    lines = [f"Multi-year ingest health ({len(names)} companies × {years} fiscal years)", "",
+             "| Ticker | FY | Report date | Chunks | Sections | Item 1A chars | Item 7 chars | Status |",
+             "|---|---|---|---|---|---|---|---|"]
+    for h in results:
+        status = f"ERROR {h.error[:100]}" if h.error else ("ok" if h.ok else "; ".join(h.warnings))
+        if h.matches_v2:
+            status += " (= v2)"
+        lines.append(f"| {h.ticker} | {h.fiscal_year or ''} | {h.report_date} | {h.chunks} | {h.sections} | "
+                     f"{h.item_chars.get('1A', 0):,} | {h.item_chars.get('7', 0):,} | {status} |")
+    lines += ["", (f"{sum(h.ok for h in results)}/{len(results)} filings passed all checks; "
+              f"{sum(h.reused for h in results)} reused from an earlier run.")]
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    Path(report).parent.mkdir(parents=True, exist_ok=True)
+    Path(report).write_text(text)
 
 
 @app.command()
@@ -340,6 +374,159 @@ def run_gate(
         with open(summary, "a") as f:
             f.write(report)
     raise typer.Exit(0 if result.passed else 1)
+
+
+@app.command(name="label-pack")
+def label_pack(
+    ticker: str = typer.Argument(..., help="e.g. NVDA"),
+    later_year: int = typer.Argument(..., help="The later fiscal year of the pair, e.g. 2026"),
+    split: str = typer.Option(..., help="dev or test"),
+    share: float = typer.Option(0.35, help="Share of later-year blocks to label (1 = everything)"),
+    seed: int = typer.Option(3, help="Random seed for the block sample"),
+    pack_dir: str = typer.Option("data/v3/label_packs", help="Where to write the readable packs"),
+) -> None:
+    """v3: write label packs and empty label CSVs for one company's two consecutive years."""
+    import json
+
+    from edgar_rag import labeling
+
+    ticker = ticker.upper()
+    out = labeling.make_pair_packs(ticker, later_year, share, seed, Path(pack_dir))
+    manifest = json.loads(labeling.MANIFEST.read_text()) if labeling.MANIFEST.exists() else {"pairs": []}
+    manifest["pairs"] = [p for p in manifest["pairs"] if not (p["ticker"] == ticker and p["later_year"] == later_year)]
+    manifest["pairs"].append({"ticker": ticker, "later_year": later_year, "split": split, "share": share,
+                              "seed": seed, "years": {str(k): v for k, v in out.items()}})
+    labeling.MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n")
+    for fy, v in out.items():
+        typer.echo(f"{ticker} FY{fy}: {len(v['chosen'])}/{v['blocks']} blocks, {v['words']:,} of "
+                   f"{v['all_words']:,} words -> {v['pack']}, labels in {v['labels']}")
+
+
+@app.command(name="label-check")
+def label_check() -> None:
+    """v3: check every labelled filing in evals/v3/labels/manifest.json."""
+    import json
+
+    from edgar_rag import labeling
+
+    manifest = json.loads(labeling.MANIFEST.read_text())
+    bad = 0
+    for p in manifest["pairs"]:
+        t, later = p["ticker"], p["later_year"]
+        rows = {}
+        for fy in (later, later - 1):
+            path = Path(p["years"][str(fy)]["labels"])
+            rows[fy] = labeling.read_labels(path) if path.exists() else []
+        targets = {r.prior_claim_id for r in rows[later] if r.prior_claim_id}
+        for fy, prior in ((later, rows[later - 1]), (later - 1, None)):
+            _, html = labeling.filing_html(t, fy)
+            blocks = labeling.blocks_for_filing(html)
+            if len(blocks) != p["years"][str(fy)]["blocks"]:
+                typer.echo(f"{t} FY{fy}: block count changed since the pack was made; regenerate it")
+            problems = labeling.check_labels(t, fy, set(p["years"][str(fy)]["chosen"]), blocks, rows[fy],
+                                             prior, targets if prior is None else frozenset())
+            bad += len(problems)
+            typer.echo(f"{t} FY{fy} ({p['split']}): {len(rows[fy])} claims, {len(problems)} problems")
+            for x in problems:
+                typer.echo(f"   - {x}")
+    raise typer.Exit(1 if bad else 0)
+
+
+@app.command(name="extract")
+def extract(
+    targets: str = typer.Argument(..., help="TICKER:FY pairs, comma-separated (e.g. MU:2026), or 'all'"),
+    peak: bool = typer.Option(False, help="Allow running in DeepSeek's peak hours (double price)"),
+    approved: bool = typer.Option(False, help="The owner approved a run estimated over $1"),
+    out_tokens: int = typer.Option(3000, help="Assumed output tokens per window, for the estimate"),
+) -> None:
+    """v3: extract claims from Items 1A and 7, with a cost estimate first (cached windows are free)."""
+    import asyncio
+
+    from edgar_rag import budget, claims, companies, config
+    from edgar_rag.labeling import blocks_for_filing, filing_html
+    from edgar_rag.llm_cache import LlmCache, sha256_text
+
+    if targets == "all":
+        pairs = [(c.ticker, c.fiscal_year - k) for c in companies.indexed_companies() for k in range(5)]
+    else:
+        pairs = [(t.split(":")[0].upper(), int(t.split(":")[1])) for t in targets.split(",")]
+    cache, version = LlmCache(), claims.extractor_version()
+    _, miss, out = config.price(claims.MODEL)
+    est, n_windows, n_cached = 0.0, 0, 0
+    for t, fy in pairs:
+        _, html = filing_html(t, fy)
+        for w in claims.windows(blocks_for_filing(html)):
+            part = f"{w[0].item}:{w[0].number}-{w[-1].number}"
+            n_windows += 1
+            if cache.get(sha256_text(html), version, claims.MODEL, part) is not None:
+                n_cached += 1
+                continue
+            prompt_tokens = (len(claims.window_text(w)) + len(claims.system_prompt())) / 4
+            est += (prompt_tokens * miss + out_tokens * out) / 1e6
+    offpeak = budget.is_offpeak()
+    typer.echo(f"Extractor {version[:12]}: {len(pairs)} filings, {n_windows} windows ({n_cached} cached). "
+               f"Estimate ${est:.2f} at list price (${est / 2:.2f} off-peak); now is "
+               f"{'off-peak' if offpeak else 'PEAK'}.")
+    if est > 1.0 and not approved:
+        typer.echo("Over $1: needs the owner's go-ahead (--approved).")
+        raise typer.Exit(1)
+    if not offpeak and not peak and est > 0:
+        typer.echo("DeepSeek peak hours (01-04 and 06-10 UTC weekdays): run later or pass --peak.")
+        raise typer.Exit(1)
+
+    async def run_all():
+        return [await claims.extract_filing(t, fy, cache) for t, fy in pairs]
+
+    for x in asyncio.run(run_all()):
+        path = claims.save(x)
+        typer.echo(f"{x.ticker} FY{x.fiscal_year}: {len(x.claims)} claims from {x.windows} windows "
+                   f"({x.cached_windows} cached); dropped {x.dropped_quote} quote, {x.dropped_invalid} invalid, "
+                   f"{x.dropped_duplicate} duplicate; {x.truncated_windows} truncated; ${x.cost_usd:.4f} -> {path}")
+
+
+@app.command(name="extract-eval")
+def extract_eval(
+    split: str = typer.Option("dev", help="dev or test"),
+    extractor: str = typer.Option(None, help="Extractor version (default: the current prompt's)"),
+    out: str = typer.Option("evals/results/v3", help="Where to write the report"),
+) -> None:
+    """v3: precision and recall of extracted claims against the hand labels, in sampled blocks."""
+    import json
+
+    from edgar_rag import claims, extraction_eval
+
+    version = extractor or claims.extractor_version()[:12]
+    report = extraction_eval.evaluate(split, version, lambda t, fy: claims.load(t, fy, version).claims)
+    text = extraction_eval.markdown(report)
+    typer.echo(text)
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / f"extraction_{split}_{version}.md").write_text(text)
+    (Path(out) / f"extraction_{split}_{version}.json").write_text(json.dumps(report, indent=1, default=str))
+
+
+@app.command(name="budget")
+def show_budget(
+    add: float = typer.Option(None, help="Record spend the ledger couldn't see (e.g. a CI run), in USD"),
+    note: str = typer.Option("", help="With --add: what it was, e.g. 'CI gate, PR #6'"),
+    purpose: str = typer.Option("ci", help="With --add: the purpose label"),
+) -> None:
+    """Show LLM spend against EDGAR_BUDGET_USD, by purpose, model and run."""
+    from edgar_rag import budget
+
+    if add is not None:
+        budget.add_manual(add, purpose, note)
+        typer.echo(f"Recorded ${add:.4f} ({purpose}: {note})")
+    s = budget.summary()
+    typer.echo(f"Ledger: {budget.ledger_path()}{'' if budget.enabled() else '  (EDGAR_LEDGER=off)'}")
+    typer.echo(f"Spent ${s.spent_usd:.4f} of ${s.cap_usd:.2f} cap, ${s.reserved_usd:.4f} reserved, "
+               f"${s.remaining_usd:.4f} left · {s.calls} calls, {s.failed} failed (list prices)")
+    for title, rows in (("By purpose", s.by_purpose), ("By model", s.by_model)):
+        typer.echo(f"\n{title}:")
+        for name, n, cost in rows:
+            typer.echo(f"  {name:<16} {n:>6} calls  ${cost:.4f}")
+    typer.echo("\nRecent runs:")
+    for run, started, n, cost in s.by_run:
+        typer.echo(f"  {run:<14} {started}  {n:>6} calls  ${cost:.4f}")
 
 
 @app.command(name="retrieval-eval")
