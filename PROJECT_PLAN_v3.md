@@ -518,4 +518,48 @@ The ledger's cap starts at `EDGAR_BUDGET_USD=10`.
 - **Why test precision is low:** generic risk-list items naming China or display customers, and two non-incident cybersecurity sentences. These are the same failure as on dev, less fixed.
 - **Open for the owner:** whether to move on to Phase 3 with these numbers stated as below target, or spend one more dev iteration (a guide decision on accounting standards, and stricter list-item rules). Re-extracting all 75 filings would cost about $1.10 list.
 
-**Spend so far:** $1.50 of $10 (list prices).
+### Phase 3 progress (2026-11-07)
+
+**Built:** `claimstore.py` (SQLite, 7 tables, UPDATE/DELETE triggers on all of them), `linking.py`, `graph.py`, `link_eval.py`, and the commands `edgar claims-load`, `link`, `graph` and `link-eval`. Tests: `tests/test_linking_graph.py` (19 tests, offline). Full suite: 113 passed.
+
+**Dev iteration (NVDA 2025-26, AAPL 2024-25; 17 items with both claims extracted):**
+
+| Linker | Change | Accuracy, given extracted (95% CI) | End to end (95% CI) |
+|---|---|---|---|
+| a18b756322db | design as planned | 53% (29–76%) | 43% (24–62%) |
+| efde3e3b501e | three rule fixes below | 88% (71–100%) | 71% (52–90%) |
+
+- **Diagnosis first:** the 8 errors had three causes, none of them a threshold.
+  1. **Quote spans:** the extractor quoted one sentence one year and two sentences the next, so "identical quotes" called word-for-word unchanged text `changed` (3 errors).
+  2. **Cross-section duplicates:** MD&A repeats last year's customer figure for comparison, and that copy took the Item 1A link (1 error).
+  3. **The model's rule was too strict:** it rejected updated-number versions of the same disclosure (3 errors).
+- **Fixes (design changes, decided on dev):**
+  - "Unchanged" now means each quote appears verbatim in the other year's section text. This replaces "the normalised quotes are identical" in the design above.
+  - Candidates must share the section as well as the type.
+  - The model prompt says that updated numbers, counts or definitions are the same claim.
+- **Thresholds unchanged:** auto-link at cosine ≥ 0.90, model band 0.72–0.90. These were set from the dev score distributions before the first run: true links scored 0.78–1.0, and wrong same-type pairs scored up to 0.85.
+- **Left on dev:** a China antitrust finding the labels call `new` was linked to last year's China investigation, a judgement call. Tuning stopped there, at 17 items.
+
+**Full linking (off-peak):** 60 company year pairs, 1,662 links (626 exact, 683 by cosine, 353 decided by the model), and 1,304 new and 1,119 dropped rows. Cost $0.063 list for all three link runs. Rebuilding from the cache cost $0. Report: [evals/results/v3/graph_health.md](evals/results/v3/graph_health.md).
+
+**Test score (AMAT 2024-25, scored once, linker efde3e3b501e):** [evals/results/v3/links_test_efde3e3b501e.md](evals/results/v3/links_test_efde3e3b501e.md)
+
+| Split | Given both claims extracted | End to end |
+|---|---|---|
+| dev | 15/17, 88% (71–100%) | 15/21, 71% (52–90%) |
+| test | 7/7, 100% (bootstrap 100–100%) | 7/16, 44% (19–69%) |
+
+- **Read with care:** 7 test items is too few for the interval to mean much, since a bootstrap can't show uncertainty when every item is correct. The plan sets no accuracy bar for linking. It asks only that the numbers be reported.
+- **End to end is limited by extraction:** all 9 test errors are claims the extractor didn't produce, 5 of them in the FASB block from Phase 2. The confusion matrices are in the report.
+- **Not 3 runs:** the linker is deterministic given the cache (temperature 0, cached decisions), so 3 runs would repeat the same numbers.
+
+**Graph:**
+- **Edges:** 3,580 `states`, 2,299 `faces_risk`, 204 `has_segment`, 77 `depends_on_supplier` and 38 `names_customer`.
+- **Aliases:** 33 merges in `evals/v3/entity_aliases.csv`. Claude reviewed the printed merge candidates (the owner didn't). Claude rejected look-alike names and parent/unit pairs (Amazon vs AWS).
+- **Grounding:** an entity edge needs the entity's name, or the name it resolves to, in the supporting quote. 76 mentions failed that and gave no edge.
+- **Checks:** 0 edges without a verified quote, and 0 entity edges with an ungrounded name.
+- **Known wrong edge:** Broadcom → Capital World Investors, which is a stockholder the extractor typed as a customer. It's left in place, and recorded.
+
+**Done-when status:** link accuracy and confusion matrices are reported on test, both given both claims extracted and end to end. The SQL check finds 0 edges without a verified quote, and the trigger tests pass. Phase 3 is done.
+
+**Spend so far:** $1.56 of $10 (list prices).

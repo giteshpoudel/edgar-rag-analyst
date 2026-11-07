@@ -1,5 +1,6 @@
 """Command-line interface: `edgar <command>`."""
 
+import itertools
 from pathlib import Path
 
 import typer
@@ -502,6 +503,151 @@ def extract_eval(
     Path(out).mkdir(parents=True, exist_ok=True)
     (Path(out) / f"extraction_{split}_{version}.md").write_text(text)
     (Path(out) / f"extraction_{split}_{version}.json").write_text(json.dumps(report, indent=1, default=str))
+
+
+def _store_rows(conn, extractor):
+    """Extracted claims from the claims table, grouped by (ticker, fiscal year)."""
+    from collections import defaultdict
+
+    from edgar_rag import claimstore
+
+    out = defaultdict(list)
+    for r in claimstore.claims_for(conn, extractor):
+        out[(r["ticker"], r["fiscal_year"])].append(r)
+    return out
+
+
+@app.command(name="claims-load")
+def claims_load(extractor: str = typer.Option("990d655db2a7", help="Extractor version to load")) -> None:
+    """v3: load one extractor version's claims into the claims database, re-checking every quote."""
+    from edgar_rag import claims, claimstore, companies
+    from edgar_rag.labeling import blocks_for_filing, filing_html, normalize
+
+    folder = config.data_dir() / claims.CLAIMS_DIR / extractor
+    xs = [claims.Extraction.model_validate_json(p.read_text()) for p in sorted(folder.glob("*.json"))]
+    blocks = {}
+    for x in xs:
+        _, html = filing_html(x.ticker, x.fiscal_year)
+        blocks[(x.ticker, x.fiscal_year)] = {b.number: b for b in blocks_for_filing(html)}
+
+    def verify(c):
+        b = blocks[(c.ticker, c.fiscal_year)].get(c.block)
+        return b is not None and b.item == c.section and normalize(c.quote) in normalize(b.text)
+
+    names = {c.ticker: c.name for c in companies.indexed_companies()}
+    conn = claimstore.connect()
+    inserted, unverified = claimstore.load_extractions(conn, xs, verify, names)
+    typer.echo(f"Extractor {extractor}: {len(xs)} filings, {sum(len(x.claims) for x in xs)} claims; "
+               f"{inserted} newly inserted, {unverified} quotes not verified. Active: "
+               f"{claimstore.active_extractor(conn)}")
+    typer.echo(claimstore.table_counts(conn))
+
+
+@app.command(name="link")
+def link_claims(
+    peak: bool = typer.Option(False, help="Allow running in DeepSeek's peak hours (double price)"),
+    approved: bool = typer.Option(False, help="The owner approved a run estimated over $1"),
+    only: str = typer.Option("", help="Comma-separated tickers (default: all)"),
+) -> None:
+    """v3: link each company's claims year to year, with a cost estimate first."""
+    import asyncio
+
+    from edgar_rag import budget, claimstore, linking
+    from edgar_rag.labeling import blocks_for_filing, filing_html, normalize
+    from edgar_rag.llm_cache import LlmCache
+
+    conn = claimstore.connect()
+    extractor = claimstore.active_extractor(conn)
+    linker = linking.linker_version()
+    groups = _store_rows(conn, extractor)
+    tickers = sorted({t for t, _ in groups} & (set(only.upper().split(",")) if only else {t for t, _ in groups}))
+    jobs = []
+    for t in tickers:
+        years = sorted(fy for tt, fy in groups if tt == t)
+        for ey, ly in itertools.pairwise(years):
+            if ly == ey + 1 and not claimstore.has_links(conn, linker, t, ly):
+                jobs.append((t, ey, ly))
+    to_c = lambda rows: [linking.C(r["uid"], r["claim_type"], r["quote"], r["section"]) for r in rows]
+    calls = sum(linking.estimate(to_c(groups[(t, ey)]), to_c(groups[(t, ly)])) for t, ey, ly in jobs)
+    est = calls * linking.estimate_call_usd()
+    offpeak = budget.is_offpeak()
+    typer.echo(f"Linker {linker} on extractor {extractor}: {len(jobs)} year pairs, up to {calls} model calls "
+               f"(cached ones are free). Estimate ${est:.2f} at list price; now is {'off-peak' if offpeak else 'PEAK'}.")
+    if est > 1.0 and not approved:
+        typer.echo("Over $1: needs the owner's go-ahead (--approved).")
+        raise typer.Exit(1)
+    if not offpeak and not peak and calls:
+        typer.echo("DeepSeek peak hours (01-04 and 06-10 UTC weekdays): run later or pass --peak.")
+        raise typer.Exit(1)
+    cache = LlmCache()
+    total_cost = total_calls = 0
+    texts = {}
+
+    def text(t, fy):  # each filing's normalised text by section, for the "same wording" check
+        if (t, fy) not in texts:
+            _, html = filing_html(t, fy)
+            blocks = blocks_for_filing(html)
+            texts[(t, fy)] = {s: normalize(" ".join(b.text for b in blocks if b.item == s)) for s in ("1A", "7")}
+        return texts[(t, fy)]
+
+    for t, ey, ly in jobs:
+        links, cost, n = asyncio.run(linking.link_years(to_c(groups[(t, ey)]), to_c(groups[(t, ly)]), ly, cache,
+                                                        earlier_text=text(t, ey), later_text=text(t, ly)))
+        claimstore.insert_links(conn, linker, t, ly, links)
+        total_cost += cost
+        total_calls += n
+        from collections import Counter
+
+        counts = Counter(k.status for k in links)
+        typer.echo(f"{t} {ey}->{ly}: " + ", ".join(f"{s} {counts[s]}" for s in linking.STATUSES) +
+                   f"; {n} model calls, ${cost:.4f}")
+    typer.echo(f"Done: {total_calls} model calls, ${total_cost:.4f} at list price.")
+
+
+@app.command(name="graph")
+def build_graph(candidates: bool = typer.Option(False, help="Only print entity merge candidates for review")) -> None:
+    """v3: build entities and edges from the active extractor's claims, then check every edge."""
+    from edgar_rag import claimstore, companies, graph
+
+    conn = claimstore.connect()
+    extractor = claimstore.active_extractor(conn)
+    if candidates:
+        for a, b, why in graph.merge_candidates(conn, extractor):
+            typer.echo(f"{why:<10} {a!r:<45} {b!r}")
+        return
+    filers = {r["ticker"]: r["company"] for r in conn.execute("SELECT DISTINCT ticker, company FROM filings")}
+    filers = {t: next((c.name for c in companies.indexed_companies() if c.ticker == t), n) for t, n in filers.items()}
+    result = graph.build(conn, extractor, filers)
+    g = result["graph"]
+    typer.echo(f"Graph {g} (extractor {extractor}): entities {dict(result['entities'])}")
+    typer.echo(f"Edges {dict(result['edges'])}")
+    typer.echo(f"Entity mentions skipped: {dict(result['skipped'])}")
+    typer.echo(f"Check: {claimstore.unverified_edges(conn, g)} edges without a verified quote, "
+               f"{graph.ungrounded_edges(conn, g)} entity edges whose name isn't in the quote.")
+
+
+@app.command(name="link-eval")
+def link_eval_cmd(
+    split: str = typer.Option("dev", help="dev or test"),
+    out: str = typer.Option("evals/results/v3", help="Where to write the report"),
+) -> None:
+    """v3: accuracy and confusion matrix of the change labels against the labelled pairs."""
+    import json
+
+    from edgar_rag import claimstore, link_eval, linking
+
+    conn = claimstore.connect()
+    extractor = claimstore.active_extractor(conn)
+    linker = linking.linker_version()
+    groups = _store_rows(conn, extractor)
+    rows = claimstore.links_for(conn, linker)
+    report = link_eval.evaluate(split, linker, lambda t, fy: groups[(t, fy)],
+                                lambda t, fy: [r for r in rows if r["ticker"] == t and r["fiscal_year"] == fy])
+    text = link_eval.markdown(report)
+    typer.echo(text)
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / f"links_{split}_{linker}.md").write_text(text)
+    (Path(out) / f"links_{split}_{linker}.json").write_text(json.dumps(report, indent=1, default=str))
 
 
 @app.command(name="budget")

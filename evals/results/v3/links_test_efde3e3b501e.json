@@ -1,0 +1,208 @@
+{
+ "split": "test",
+ "linker": "efde3e3b501e",
+ "end_to_end": {
+  "items": 16,
+  "correct": 7,
+  "accuracy": 0.4375,
+  "ci95": [
+   0.1875,
+   0.6875
+  ]
+ },
+ "given_extracted": {
+  "items": 7,
+  "correct": 7,
+  "accuracy": 1.0,
+  "ci95": [
+   1.0,
+   1.0
+  ]
+ },
+ "confusion_end_to_end": {
+  "changed": {
+   "missed": 3,
+   "changed": 1
+  },
+  "new": {
+   "new": 4,
+   "missed": 2
+  },
+  "unchanged": {
+   "missed": 2,
+   "unchanged": 1
+  },
+  "dropped": {
+   "dropped": 1,
+   "missed": 2
+  }
+ },
+ "confusion_given_extracted": {
+  "new": {
+   "new": 4
+  },
+  "changed": {
+   "changed": 1
+  },
+  "unchanged": {
+   "unchanged": 1
+  },
+  "dropped": {
+   "dropped": 1
+  }
+ },
+ "pairs": [
+  {
+   "pair": "AMAT 2024-2025",
+   "items": 16,
+   "correct": 7,
+   "accuracy": 0.4375
+  }
+ ],
+ "items": [
+  {
+   "gold": "changed",
+   "claim": "AMAT-2025-001",
+   "block": 5,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-002",
+   "block": 5,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "AMAT-2025-003",
+   "block": 8,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "changed",
+   "claim": "AMAT-2025-004",
+   "block": 20,
+   "extracted": true,
+   "pred": "changed",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-005",
+   "block": 20,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "changed",
+   "claim": "AMAT-2025-006",
+   "block": 32,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-007",
+   "block": 32,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "AMAT-2025-008",
+   "block": 32,
+   "extracted": true,
+   "pred": "unchanged",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-009",
+   "block": 32,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-010",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "new",
+   "claim": "AMAT-2025-011",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "changed",
+   "claim": "AMAT-2025-012",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "AMAT-2025-013",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "dropped",
+   "claim": "AMAT-2024-005",
+   "block": 32,
+   "extracted": true,
+   "pred": "dropped",
+   "correct": true,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "dropped",
+   "claim": "AMAT-2024-009",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  },
+  {
+   "gold": "dropped",
+   "claim": "AMAT-2024-010",
+   "block": 38,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AMAT 2024-2025"
+  }
+ ]
+}
