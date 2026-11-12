@@ -15,8 +15,17 @@ from edgar_rag import companies, config, tracing
 from edgar_rag.answer import parse_citations
 from edgar_rag.grounding import check as check_grounding
 from edgar_rag.llm import acomplete
-from edgar_rag.prompts import AGENT_SYSTEM, DEMO_RULES
+from edgar_rag.prompts import AGENT_SYSTEM, DEMO_RULES, V3_RULES
 from edgar_rag.tools import TOOLS, Source, Sources, StagedSources
+
+
+def active_tools() -> dict:
+    """The tools for this run: v2's, plus the claim and graph tools with EDGAR_TOOLSET=v3."""
+    if config.toolset() == "v2":
+        return TOOLS
+    from edgar_rag import claim_tools
+
+    return {**TOOLS, **{t.name: t for t in claim_tools.tools()}}
 
 MAX_STEPS = 6  # LLM calls per question; stops runaway loops
 # Up to this many companies, list them all in the prompt (~15 tokens each). Beyond it the list
@@ -93,7 +102,7 @@ def run_tool(name: str, raw_args: str, sources: Sources) -> tuple[dict, str, boo
         args_dict = json.loads(raw_args or "{}")
     except json.JSONDecodeError:
         return {}, "ERROR: arguments were not valid JSON", True
-    tool = TOOLS.get(name)
+    tool = active_tools().get(name)
     if not tool:
         return args_dict, f"ERROR: unknown tool '{name}'", True
     try:
@@ -204,8 +213,10 @@ async def aask(question: str) -> AgentAnswer:
 async def _ask(question: str) -> AgentAnswer:
     sources = Sources()
     tool_calls: list[ToolCall] = []
-    schemas = [t.schema_for_llm() for t in TOOLS.values()]
+    schemas = [t.schema_for_llm() for t in active_tools().values()]
     system = AGENT_SYSTEM.format(companies=available_companies())
+    if config.toolset() == "v3":
+        system += V3_RULES
     if config.demo_mode():
         system += DEMO_RULES
     messages: list[dict] = [

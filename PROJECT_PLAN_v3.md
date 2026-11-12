@@ -562,4 +562,23 @@ The ledger's cap starts at `EDGAR_BUDGET_USD=10`.
 
 **Done-when status:** link accuracy and confusion matrices are reported on test, both given both claims extracted and end to end. The SQL check finds 0 edges without a verified quote, and the trigger tests pass. Phase 3 is done.
 
-**Spend so far:** $1.56 of $10 (list prices).
+### Phase 4 progress (2026-11-12)
+
+**Built:** `claim_tools.py` with four tools: `claim_history`, `compare_claims`, `graph_neighbors` and `find_entity`.
+- **Switch:** they're added to the agent only with `EDGAR_TOOLSET=v3` (`config.toolset()`, default `v2`). That setting also adds a short block of v3 rules to the system prompt.
+- **Same rules as v2:** typed Pydantic arguments, with `topic` an enum of the 13 claim types, and lists capped at 20 (4 per company in `compare_claims`). A capped list says what it left out, per year.
+- **Citations:** every claim is printed with its exact quote and cited as a new source kind, `claim` (ref = claim uid, url = the filing).
+- **Grounding:** the quotes are in the tool text, so the number-grounding guard checks figures taken from them, unchanged.
+- **Versions:** the tools read the active extractor, the current linker version and the current graph version. `EDGAR_LINKER` and `EDGAR_GRAPH` can override the last two.
+- **No database:** without a local claims database, every v3 tool returns an ERROR message instead of failing. CI and the demo backend don't have the database.
+
+**Tests:** `tests/test_claim_tools.py` (12 tests, offline). They run on a fixture database built with the real store, linker (fake embedder and judge) and graph code. They cover statuses (first year, new, changed, unchanged, dropped), keyword filters, the caps and their "not shown" notes, explicit "none found", errors, alias resolution, ambiguous names, relation and year filters, citations, the missing-database message, and the toolset switch. Full suite: 125 passed.
+
+**Smoke run (6 questions, $0.026):** [evals/results/v3/tools_smoke.md](evals/results/v3/tools_smoke.md).
+- The model picked the v3 tools for every history, comparison and supplier question, and the v2 metric tool for the revenue question.
+- 0 invalid citations and 0 unsupported numbers.
+- Seen for Phase 5a: answers are long, and the 20-item cap makes broad history questions page through several calls.
+
+**Done-when status:** offline tests cover every tool, including caps, empty results and citations. The v2 gate with the default toolset runs in CI when this is pushed, since the default path is unchanged apart from the `active_tools()` lookup.
+
+**Spend so far:** $1.71 of $10 (list prices; includes the PR #6 CI gate, recorded as an estimated $0.12).

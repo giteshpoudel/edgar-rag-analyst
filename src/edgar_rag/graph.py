@@ -32,7 +32,7 @@ from pathlib import Path
 from edgar_rag.labeling import normalize
 from edgar_rag.llm_cache import sha256_json, sha256_text
 
-ALIASES = Path("evals/v3/entity_aliases.csv")
+ALIASES = Path(__file__).resolve().parents[2] / "evals/v3/entity_aliases.csv"  # not cwd-relative
 RULES = "v3: grounded entity edges; 1A claims face risk topics; segments scoped by ticker; no /XX state suffix"
 
 SUFFIXES = {"inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "nv", "plc",

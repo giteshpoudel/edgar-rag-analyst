@@ -22,9 +22,9 @@ class Source(BaseModel):
     """Something an answer can cite as [n]."""
 
     n: int
-    kind: Literal["filing", "xbrl"]
+    kind: Literal["filing", "xbrl", "claim"]  # claim: a v3 claim with its exact quote
     label: str
-    ref: str  # chunk id, or accession number + XBRL tag
+    ref: str  # chunk id, accession number + XBRL tag, or claim uid
     url: str
     score: float | None = None  # search similarity, for filing passages
 
