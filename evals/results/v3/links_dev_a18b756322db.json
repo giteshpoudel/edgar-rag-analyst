@@ -1,0 +1,263 @@
+{
+ "split": "dev",
+ "linker": "a18b756322db",
+ "end_to_end": {
+  "items": 21,
+  "correct": 9,
+  "accuracy": 0.42857142857142855,
+  "ci95": [
+   0.23809523809523808,
+   0.6190476190476191
+  ]
+ },
+ "given_extracted": {
+  "items": 17,
+  "correct": 9,
+  "accuracy": 0.5294117647058824,
+  "ci95": [
+   0.29411764705882354,
+   0.7647058823529411
+  ]
+ },
+ "confusion_end_to_end": {
+  "changed": {
+   "missed": 3,
+   "new": 4,
+   "changed": 1
+  },
+  "new": {
+   "new": 4,
+   "changed": 1
+  },
+  "unchanged": {
+   "unchanged": 3,
+   "changed": 3,
+   "missed": 1
+  },
+  "dropped": {
+   "dropped": 1
+  }
+ },
+ "confusion_given_extracted": {
+  "new": {
+   "new": 4,
+   "changed": 1
+  },
+  "changed": {
+   "new": 4,
+   "changed": 1
+  },
+  "unchanged": {
+   "unchanged": 3,
+   "changed": 3
+  },
+  "dropped": {
+   "dropped": 1
+  }
+ },
+ "pairs": [
+  {
+   "pair": "NVDA 2025-2026",
+   "items": 20,
+   "correct": 9,
+   "accuracy": 0.45
+  },
+  {
+   "pair": "AAPL 2024-2025",
+   "items": 1,
+   "correct": 0,
+   "accuracy": 0.0
+  }
+ ],
+ "items": [
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-001",
+   "block": 9,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "new",
+   "claim": "NVDA-2026-002",
+   "block": 9,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-003",
+   "block": 19,
+   "extracted": true,
+   "pred": "new",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-004",
+   "block": 19,
+   "extracted": true,
+   "pred": "new",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-005",
+   "block": 24,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-006",
+   "block": 24,
+   "extracted": true,
+   "pred": "changed",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-007",
+   "block": 24,
+   "extracted": true,
+   "pred": "unchanged",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-008",
+   "block": 24,
+   "extracted": true,
+   "pred": "changed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "new",
+   "claim": "NVDA-2026-009",
+   "block": 24,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-010",
+   "block": 24,
+   "extracted": true,
+   "pred": "changed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-011",
+   "block": 24,
+   "extracted": true,
+   "pred": "changed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-012",
+   "block": 24,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "new",
+   "claim": "NVDA-2026-013",
+   "block": 24,
+   "extracted": true,
+   "pred": "changed",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-014",
+   "block": 31,
+   "extracted": true,
+   "pred": "unchanged",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "unchanged",
+   "claim": "NVDA-2026-015",
+   "block": 35,
+   "extracted": true,
+   "pred": "unchanged",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-016",
+   "block": 52,
+   "extracted": true,
+   "pred": "new",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "new",
+   "claim": "NVDA-2026-017",
+   "block": 52,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "NVDA-2026-018",
+   "block": 52,
+   "extracted": true,
+   "pred": "new",
+   "correct": false,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "new",
+   "claim": "NVDA-2026-019",
+   "block": 54,
+   "extracted": true,
+   "pred": "new",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "dropped",
+   "claim": "NVDA-2025-001",
+   "block": 9,
+   "extracted": true,
+   "pred": "dropped",
+   "correct": true,
+   "pair": "NVDA 2025-2026"
+  },
+  {
+   "gold": "changed",
+   "claim": "AAPL-2025-001",
+   "block": 44,
+   "extracted": false,
+   "pred": "missed",
+   "correct": false,
+   "pair": "AAPL 2024-2025"
+  }
+ ]
+}

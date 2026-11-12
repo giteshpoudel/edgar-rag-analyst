@@ -81,6 +81,12 @@ def grounding_guard() -> str:
     return _choice("GROUNDING_GUARD", "on", ("on", "off"))
 
 
+def toolset() -> str:
+    """v2 (default): the shipped tools. v3: adds the claim and graph tools (claim_tools.py),
+    which read the local v3 claims database. v3 stays opt-in until it's shown not to regress."""
+    return _choice("EDGAR_TOOLSET", "v2", ("v2", "v3"))
+
+
 def rerank_candidates() -> int:
     """How many first-stage results the reranker re-orders."""
     return int(os.getenv("RERANK_CANDIDATES", "30"))

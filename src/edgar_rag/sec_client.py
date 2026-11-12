@@ -137,6 +137,42 @@ class SecClient:
                 )
         raise ValueError(f"No {form} found for {ticker}")
 
+    def filings(self, ticker: str, form: str = "10-K", count: int = 5,
+                latest_accession: str | None = None) -> list[Filing]:
+        """The `count` most recent filings of a form, newest first (v3 multi-year ingest).
+
+        With latest_accession, the list starts at that filing instead of the newest one, so v3's
+        years end at the same 10-K that v2 indexed even if a newer one has been filed since.
+        Only the exact form counts: amendments (10-K/A) are skipped.
+        """
+        cik, company = self.lookup_cik(ticker)
+        submissions = self._get_json_cached(
+            SUBMISSIONS_URL.format(cik=cik),
+            self.cache_dir / ticker.upper() / "submissions.json",
+        )
+        recent = submissions["filings"]["recent"]  # column-oriented, newest first
+        found: list[Filing] = []
+        started = latest_accession is None
+        for i, form_type in enumerate(recent["form"]):
+            if form_type != form:
+                continue
+            started = started or recent["accessionNumber"][i] == latest_accession
+            if not started:
+                continue
+            found.append(Filing(
+                ticker=ticker.upper(), company=company, cik=cik, form=form_type,
+                accession_number=recent["accessionNumber"][i], filing_date=recent["filingDate"][i],
+                report_date=recent["reportDate"][i], primary_document=recent["primaryDocument"][i],
+            ))
+            if len(found) == count:
+                return found
+        if not started:
+            raise ValueError(f"{ticker}: {form} {latest_accession} is not in the submissions list")
+        # The "recent" list covers at least a year or 1,000 filings; older ones are in extra pages
+        # we don't read yet. Fail loudly rather than silently ingest fewer years.
+        raise ValueError(f"{ticker}: only {len(found)} {form} filings in the recent submissions list, "
+                         f"{count} requested")
+
     def company_facts(self, ticker: str) -> dict:
         """All XBRL facts the company has reported (every filing), as one JSON document."""
         cik, _ = self.lookup_cik(ticker)

@@ -1,0 +1,149 @@
+{
+ "split": "dev",
+ "extractor": "e6361d5682b5",
+ "blocks": 48,
+ "overall": {
+  "labelled": 31,
+  "extracted": 64,
+  "matched": 22,
+  "precision": 0.34375,
+  "recall": 0.7096774193548387,
+  "f1": 0.4631578947368421,
+  "matched_ignoring_type": 23
+ },
+ "ci95": {
+  "precision": [
+   0.1527777777777778,
+   0.625
+  ],
+  "recall": [
+   0.5714285714285714,
+   0.84
+  ],
+  "f1": [
+   0.2448979591836735,
+   0.6846846846846847
+  ]
+ },
+ "per_type": {
+  "customer_concentration": {
+   "labelled": 6,
+   "extracted": 8,
+   "matched": 5,
+   "precision": 0.625,
+   "recall": 0.8333333333333334
+  },
+  "supplier_dependence": {
+   "labelled": 2,
+   "extracted": 2,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": 0.0
+  },
+  "export_controls_trade": {
+   "labelled": 2,
+   "extracted": 7,
+   "matched": 2,
+   "precision": 0.2857142857142857,
+   "recall": 1.0
+  },
+  "geographic_exposure": {
+   "labelled": 2,
+   "extracted": 5,
+   "matched": 2,
+   "precision": 0.4,
+   "recall": 1.0
+  },
+  "segment_change": {
+   "labelled": 0,
+   "extracted": 2,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "strategic_partnership": {
+   "labelled": 1,
+   "extracted": 1,
+   "matched": 1,
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "capacity_investment": {
+   "labelled": 1,
+   "extracted": 6,
+   "matched": 1,
+   "precision": 0.16666666666666666,
+   "recall": 1.0
+  },
+  "legal_regulatory": {
+   "labelled": 17,
+   "extracted": 18,
+   "matched": 11,
+   "precision": 0.6111111111111112,
+   "recall": 0.6470588235294118
+  },
+  "cybersecurity_incident": {
+   "labelled": 0,
+   "extracted": 4,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "ai_demand": {
+   "labelled": 0,
+   "extracted": 10,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "competition": {
+   "labelled": 0,
+   "extracted": 1,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  }
+ },
+ "per_filing": [
+  {
+   "filing": "NVDA_2026",
+   "labelled": 19,
+   "extracted": 38,
+   "matched": 15,
+   "precision": 0.39473684210526316,
+   "recall": 0.7894736842105263,
+   "f1": 0.5263157894736843,
+   "matched_ignoring_type": 15
+  },
+  {
+   "filing": "NVDA_2025",
+   "labelled": 10,
+   "extracted": 13,
+   "matched": 7,
+   "precision": 0.5384615384615384,
+   "recall": 0.7,
+   "f1": 0.608695652173913,
+   "matched_ignoring_type": 8
+  },
+  {
+   "filing": "AAPL_2025",
+   "labelled": 1,
+   "extracted": 5,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": null,
+   "matched_ignoring_type": 0
+  },
+  {
+   "filing": "AAPL_2024",
+   "labelled": 1,
+   "extracted": 8,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": null,
+   "matched_ignoring_type": 0
+  }
+ ]
+}

@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from edgar_rag import tracing
+from edgar_rag.budget import BudgetExceeded
 from edgar_rag.scoring import (
     Evidence,
     Expected,
@@ -240,6 +241,8 @@ async def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     try:
         out = await _run_mode(item.question, mode)
         error = ""
+    except BudgetExceeded:
+        raise  # out of budget: stop the whole run, don't score the rest as failures
     except Exception as e:  # noqa: BLE001 - one failure shouldn't stop the run; it's scored as a fail
         out = {"answer": "", "tools_used": [], "retrieved_items": [], "invalid_citations": [],
                "prompt_tokens": 0, "completion_tokens": 0, "truncated": False, "top_score": None,

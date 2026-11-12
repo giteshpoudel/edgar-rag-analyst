@@ -7,7 +7,7 @@ from functools import lru_cache
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from edgar_rag import config, retry, tracing
+from edgar_rag import budget, config, retry, tracing
 
 TIMEOUT_SECONDS = 120.0  # a reasoning model's long answer can take a while; a hung call can't
 
@@ -41,15 +41,18 @@ def _aclient() -> AsyncOpenAI:
     return _async_clients[loop]
 
 
-def _request(messages: list[dict], tools, max_tokens: int, model: str, tool_choice) -> tuple[dict, dict]:
-    """API arguments, and the parameters recorded on the span."""
-    kwargs: dict = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
+def _request(messages: list[dict], tools, max_tokens: int, model: str, tool_choice,
+             extra: dict | None = None) -> tuple[dict, dict]:
+    """API arguments, and the parameters recorded on the span. `extra` adds request fields
+    such as response_format (v3 extraction asks for JSON output)."""
+    kwargs: dict = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens,
+                    **(extra or {})}
     if tools:
         kwargs["tools"] = tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
     params = {"temperature": 0, "max_tokens": max_tokens, "tool_choice": tool_choice,
-              "tools": [t["function"]["name"] for t in tools or []]}
+              "tools": [t["function"]["name"] for t in tools or []], **(extra or {})}
     return kwargs, params
 
 
@@ -62,13 +65,18 @@ def complete(
     model: str | None = None,
     tool_choice: str | None = None,
     span_name: str = "llm",
+    extra: dict | None = None,
 ):
     """One API call (retried on transient errors), recorded as an LLM span with tokens, cost
     and latency. Returns the SDK response object."""
     model = model or config.llm_model()
-    kwargs, params = _request(messages, tools, max_tokens, model, tool_choice)
-    with tracing.span(span_name, "LLM") as span:
+    kwargs, params = _request(messages, tools, max_tokens, model, tool_choice, extra)
+    # The ledger reserves the call's worst-case cost first, and raises BudgetExceeded instead of
+    # calling if that could cross EDGAR_BUDGET_USD (see budget.py).
+    with budget.reserve(model, messages, tools, max_tokens, span_name) as reservation, \
+            tracing.span(span_name, "LLM") as span:
         response = retry.call(lambda: _client().chat.completions.create(**kwargs))
+        reservation.settle(response)
         tracing.record_llm(span, model, messages, response, params)
     return response
 
@@ -80,12 +88,17 @@ async def acomplete(
     model: str | None = None,
     tool_choice: str | None = None,
     span_name: str = "llm",
+    extra: dict | None = None,
 ):
     """Async version of complete: while one question waits on the API, others keep running."""
     model = model or config.llm_model()
-    kwargs, params = _request(messages, tools, max_tokens, model, tool_choice)
-    with tracing.span(span_name, "LLM") as span:
+    kwargs, params = _request(messages, tools, max_tokens, model, tool_choice, extra)
+    # The ledger reserves the call's worst-case cost first, and raises BudgetExceeded instead of
+    # calling if that could cross EDGAR_BUDGET_USD (see budget.py).
+    with budget.reserve(model, messages, tools, max_tokens, span_name) as reservation, \
+            tracing.span(span_name, "LLM") as span:
         response = await retry.acall(lambda: _aclient().chat.completions.create(**kwargs))
+        reservation.settle(response)
         tracing.record_llm(span, model, messages, response, params)
     return response
 
