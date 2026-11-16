@@ -1,0 +1,108 @@
+{
+ "split": "test",
+ "extractor": "990d655db2a7",
+ "blocks": 22,
+ "overall": {
+  "labelled": 21,
+  "extracted": 16,
+  "matched": 8,
+  "precision": 0.5,
+  "recall": 0.38095238095238093,
+  "f1": 0.4324324324324324,
+  "matched_ignoring_type": 10
+ },
+ "ci95": {
+  "precision": [
+   0.1111111111111111,
+   0.8461538461538461
+  ],
+  "recall": [
+   0.08333333333333333,
+   0.6818181818181818
+  ],
+  "f1": [
+   0.13333333333333333,
+   0.6923076923076924
+  ]
+ },
+ "per_type": {
+  "customer_concentration": {
+   "labelled": 0,
+   "extracted": 1,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "supplier_dependence": {
+   "labelled": 0,
+   "extracted": 1,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "export_controls_trade": {
+   "labelled": 7,
+   "extracted": 5,
+   "matched": 4,
+   "precision": 0.8,
+   "recall": 0.5714285714285714
+  },
+  "geographic_exposure": {
+   "labelled": 0,
+   "extracted": 3,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "segment_change": {
+   "labelled": 2,
+   "extracted": 2,
+   "matched": 2,
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "legal_regulatory": {
+   "labelled": 10,
+   "extracted": 2,
+   "matched": 2,
+   "precision": 1.0,
+   "recall": 0.2
+  },
+  "cybersecurity_incident": {
+   "labelled": 0,
+   "extracted": 2,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "ai_demand": {
+   "labelled": 2,
+   "extracted": 0,
+   "matched": 0,
+   "precision": null,
+   "recall": 0.0
+  }
+ },
+ "per_filing": [
+  {
+   "filing": "AMAT_2025",
+   "labelled": 13,
+   "extracted": 9,
+   "matched": 6,
+   "precision": 0.6666666666666666,
+   "recall": 0.46153846153846156,
+   "f1": 0.5454545454545455,
+   "matched_ignoring_type": 7
+  },
+  {
+   "filing": "AMAT_2024",
+   "labelled": 8,
+   "extracted": 7,
+   "matched": 2,
+   "precision": 0.2857142857142857,
+   "recall": 0.25,
+   "f1": 0.26666666666666666,
+   "matched_ignoring_type": 3
+  }
+ ]
+}

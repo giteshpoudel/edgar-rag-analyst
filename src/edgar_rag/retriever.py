@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from edgar_rag import config, tracing
 from edgar_rag.chunking import Chunk
 from edgar_rag.embeddings import embed_query
-from edgar_rag.index import TABLE_NAME, connect
+from edgar_rag.index import connect
 
 RRF_K = 60  # standard constant: damps the advantage of rank 1 over rank 2 and so on
 
@@ -26,8 +26,10 @@ class SearchResult(BaseModel):
     score: float
 
 
-def _where(ticker: str | None, item: str | None) -> str | None:
+def _where(ticker: str | None, item: str | None, fiscal_year: int | None = None) -> str | None:
     filters = []
+    if fiscal_year:  # only the multi-year table has this column
+        filters.append(f"fiscal_year = {int(fiscal_year)}")
     if ticker:
         filters.append(f"ticker = '{ticker.upper()}'")
     if item:
@@ -46,7 +48,7 @@ def _rows_to_results(rows: list[dict], score_field: str, transform=lambda s: s) 
 
 
 def _vector(question: str, n: int, where: str | None) -> list[SearchResult]:
-    query = connect().open_table(TABLE_NAME).search(embed_query(question)).metric("cosine")
+    query = connect().open_table(config.search_table()).search(embed_query(question)).metric("cosine")
     if where:
         # prefilter: apply the filter before ranking, so we still get n results.
         query = query.where(where, prefilter=True)
@@ -62,7 +64,7 @@ def fts_query(question: str) -> str:
 
 
 def _keyword(question: str, n: int, where: str | None) -> list[SearchResult]:
-    query = connect().open_table(TABLE_NAME).search(fts_query(question), query_type="fts")
+    query = connect().open_table(config.search_table()).search(fts_query(question), query_type="fts")
     if where:
         query = query.where(where, prefilter=True)
     return _rows_to_results(query.limit(n).to_list(), "_score")
@@ -89,6 +91,7 @@ def search(
     mode: str | None = None,
     reranker: str | None = None,
     candidates: int | None = None,
+    fiscal_year: int | None = None,
 ) -> list[SearchResult]:
     """Return the k most relevant chunks for the question (recorded as a RETRIEVER span)."""
     mode = mode or config.retrieval_mode()
@@ -97,7 +100,7 @@ def search(
         "input.value": question, "edgar.mode": mode, "edgar.reranker": reranker, "edgar.k": k,
         "edgar.ticker": ticker, "edgar.item": item,
     }) as span:
-        results = _search(question, k, ticker, item, mode, reranker, candidates)
+        results = _search(question, k, ticker, item, mode, reranker, candidates, fiscal_year)
         attrs = {}
         for i, r in enumerate(results):
             p = f"retrieval.documents.{i}.document"
@@ -109,11 +112,11 @@ def search(
 
 
 def _search(question: str, k: int, ticker: str | None, item: str | None, mode: str,
-            reranker: str, candidates: int | None) -> list[SearchResult]:
+            reranker: str, candidates: int | None, fiscal_year: int | None = None) -> list[SearchResult]:
     use_reranker = reranker != "none"
     # The first stage fetches more than k when a reranker will choose among them.
     n = max(k, candidates or config.rerank_candidates()) if use_reranker else k
-    where = _where(ticker, item)
+    where = _where(ticker, item, fiscal_year)
 
     if mode == "vector":
         results = _vector(question, n, where)

@@ -97,3 +97,116 @@ def ingest_one(ticker: str, client: SecClient | None = None) -> Health:
 def ingest(tickers: list[str]) -> list[Health]:
     client = SecClient()  # one client so request throttling covers the whole batch
     return [ingest_one(t, client) for t in tickers]
+
+
+# --- v3: several fiscal years per company --------------------------------------------------
+
+V3_ITEMS = ["1A", "7"]  # Risk Factors and MD&A: what v3 extracts claims from
+MULTI_DIR = "processed_multi"  # kept apart from data/processed, which v2's eval and tools read
+
+
+class YearHealth(BaseModel):
+    """Health of one filing in a multi-year ingest."""
+
+    ticker: str
+    fiscal_year: int | None = None
+    report_date: str = ""
+    accession: str = ""
+    chunks: int = 0
+    sections: int = 0
+    item_chars: dict[str, int] = {}  # characters of text in Items 1A and 7
+    reused: bool = False  # already in chunks_multi, so not embedded again
+    matches_v2: bool | None = None  # latest year only: same chunks as v2's file
+    warnings: list[str] = []
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and not self.warnings
+
+
+def v2_latest(ticker: str) -> tuple[str, list]:
+    """The accession number and chunks of the 10-K v2 indexed for a company."""
+    from edgar_rag.index import load_chunks
+
+    (path,) = sorted((config.data_dir() / "processed" / ticker.upper()).glob("*.chunks.jsonl"))
+    chunks = load_chunks(path)
+    return chunks[0].accession_number, chunks
+
+
+def ingest_years_one(ticker: str, years: int, client: SecClient) -> list[YearHealth]:
+    """Download, chunk and index `years` 10-Ks for one company, ending at v2's latest one."""
+    from edgar_rag.index import MULTI_TABLE_NAME, index_chunks, indexed_count
+
+    ticker = ticker.upper()
+    try:
+        latest_accession, v2_chunks = v2_latest(ticker)
+        filings = client.filings(ticker, "10-K", years, latest_accession=latest_accession)
+    except Exception as e:  # noqa: BLE001
+        return [YearHealth(ticker=ticker, error=f"{type(e).__name__}: {e}")]
+
+    report: list[YearHealth] = []
+    for filing in filings:
+        h = YearHealth(ticker=ticker, fiscal_year=int(filing.report_date[:4]),
+                       report_date=filing.report_date, accession=filing.accession_number)
+        try:
+            html_path = client.download(filing)
+            chunks = chunk_filing(html_path.read_text(encoding="utf-8"), filing)
+            out_dir = config.data_dir() / MULTI_DIR / ticker
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{html_path.stem}.chunks.jsonl").write_text(
+                "".join(c.model_dump_json() + "\n" for c in chunks))
+            if chunks and indexed_count(filing.accession_number, MULTI_TABLE_NAME) == len(chunks):
+                h.reused = True  # chunking is deterministic, so the stored rows are the same
+            elif chunks:
+                index_chunks(chunks, MULTI_TABLE_NAME, extra={"fiscal_year": h.fiscal_year},
+                             keyword_index=False)
+        except Exception as e:  # noqa: BLE001
+            h.error = f"{type(e).__name__}: {e}"
+            report.append(h)
+            continue
+
+        h.chunks = len(chunks)
+        h.sections = len({c.item for c in chunks})
+        for item in V3_ITEMS:
+            h.item_chars[item] = sum(len(c.text) for c in chunks if c.item == item)
+            if not h.item_chars[item]:
+                h.warnings.append(f"Item {item} not found")
+        if h.sections < MIN_SECTIONS:
+            h.warnings.append(f"only {h.sections} sections found")
+        if filing.accession_number == latest_accession:
+            h.matches_v2 = [(c.chunk_id, c.text) for c in chunks] == [(c.chunk_id, c.text) for c in v2_chunks]
+            if not h.matches_v2:
+                h.warnings.append("latest year's chunks differ from v2's")
+        report.append(h)
+    _check_years(report, years)
+    return report
+
+
+def _check_years(report: list[YearHealth], years: int) -> None:
+    """Fiscal years must be unique and consecutive: a gap or a repeat means a filing was
+    skipped, or a 52/53-week year ended in the first days of January and got the wrong name."""
+    found = [h.fiscal_year for h in report if h.fiscal_year]
+    if not found:
+        return
+    expected = list(range(max(found), max(found) - years, -1))
+    if found != expected:
+        report[0].warnings.append(f"fiscal years {found}, expected {expected}")
+    # Older filings shrinking sharply usually means a section boundary was missed.
+    latest = report[0].item_chars
+    for h in report[1:]:
+        for item in V3_ITEMS:
+            if latest.get(item) and h.item_chars.get(item, 0) < 0.4 * latest[item]:
+                h.warnings.append(f"Item {item} is {h.item_chars.get(item, 0):,} chars vs "
+                                  f"{latest[item]:,} in the latest year")
+
+
+def ingest_years(tickers: list[str], years: int = 5) -> list[YearHealth]:
+    """v3 multi-year ingest into data/processed_multi and the chunks_multi table."""
+    from edgar_rag.index import MULTI_TABLE_NAME, build_keyword_index
+
+    client = SecClient()
+    report = [h for t in tickers for h in ingest_years_one(t, years, client)]
+    if any(h.chunks for h in report):
+        build_keyword_index(MULTI_TABLE_NAME)  # once for the batch, not once per filing
+    return report

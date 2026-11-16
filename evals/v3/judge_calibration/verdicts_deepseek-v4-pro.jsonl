@@ -1,0 +1,80 @@
+{"cid": "C01", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C02", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C03", "key_points": [false], "refused": false, "error": "", "raw": "{\"key_points\": [false], \"refused\": false}"}
+{"cid": "C04", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C05", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C06", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C07", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C08", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C09", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C10", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "C11", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C12", "key_points": [false, false, false], "refused": false, "error": "truncated", "raw": ""}
+{"cid": "C13", "key_points": [true, true], "refused": false, "error": "", "raw": "{\n  \"key_points\": [true, true],\n  \"refused\": false\n}"}
+{"cid": "C14", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C15", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C16", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C17", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C18", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C19", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C20", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C21", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C22", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C23", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C24", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C25", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\":[true,true],\"refused\":false}"}
+{"cid": "C26", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C27", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C28", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C29", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C30", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C31", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C32", "key_points": [true, true, true], "refused": false, "error": "", "raw": "{\"key_points\":[true,true,true],\"refused\":false}"}
+{"cid": "C33", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C34", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C35", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C36", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C37", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C38", "key_points": [], "refused": true, "error": "", "raw": "{\"key_points\": [], \"refused\": true}"}
+{"cid": "C39", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C40", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C41", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C42", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\":[true],\"refused\":false}"}
+{"cid": "C43", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C44", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\":[true],\"refused\":false}"}
+{"cid": "C45", "key_points": [true, true, true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true, true, true], \"refused\": false}"}
+{"cid": "C46", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C47", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C48", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C49", "key_points": [], "refused": false, "error": "", "raw": "{\"key_points\": [], \"refused\": false}"}
+{"cid": "C50", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\":[true],\"refused\":false}"}
+{"cid": "C51", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C52", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C53", "key_points": [true, true, true, true, true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true, true, true, true, true], \"refused\": false}"}
+{"cid": "C54", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\":[true],\"refused\":false}"}
+{"cid": "C55", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "C56", "key_points": [true, true], "refused": false, "error": "", "raw": "{\"key_points\": [true, true], \"refused\": false}"}
+{"cid": "C57", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C58", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C59", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "C60", "key_points": [true], "refused": false, "error": "", "raw": "{\"key_points\": [true], \"refused\": false}"}
+{"cid": "P01", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "P02", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "P03", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "P04", "key_points": [false, false], "refused": false, "error": "", "raw": "{\"key_points\": [false, false], \"refused\": false}"}
+{"cid": "P05", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "P06", "key_points": [false, false], "refused": false, "error": "", "raw": "{\"key_points\": [false, false], \"refused\": false}"}
+{"cid": "P07", "key_points": [false, false], "refused": false, "error": "", "raw": "{\"key_points\": [false, false], \"refused\": false}"}
+{"cid": "P08", "key_points": [false, false], "refused": false, "error": "", "raw": "{\"key_points\": [false, false], \"refused\": false}"}
+{"cid": "P09", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "P10", "key_points": [false, true], "refused": false, "error": "", "raw": "{\"key_points\": [false, true], \"refused\": false}"}
+{"cid": "P11", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\":[true,false],\"refused\":false}"}
+{"cid": "P12", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "P13", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "P14", "key_points": [false, false, true], "refused": false, "error": "", "raw": "{\"key_points\":[false,false,true],\"refused\":false}"}
+{"cid": "P15", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "P16", "key_points": [true, false], "refused": false, "error": "", "raw": "{\"key_points\": [true, false], \"refused\": false}"}
+{"cid": "P17", "key_points": [false], "refused": false, "error": "", "raw": "{\"key_points\": [false], \"refused\": false}"}
+{"cid": "P18", "key_points": [], "refused": false, "error": "", "raw": "{\"key_points\": [], \"refused\": false}"}
+{"cid": "P19", "key_points": [], "refused": false, "error": "", "raw": "{\"key_points\": [], \"refused\": false}"}
+{"cid": "P20", "key_points": [], "refused": false, "error": "", "raw": "{\"key_points\": [], \"refused\": false}"}

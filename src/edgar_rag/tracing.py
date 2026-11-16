@@ -205,9 +205,27 @@ def _message_attributes(prefix: str, i: int, message: dict) -> dict:
     return out
 
 
+def usage_counts(response) -> tuple[int, int, int]:
+    """(prompt, cached prompt, completion) tokens of a response; zeros if it has no usage.
+    Cached tokens are DeepSeek's prompt_cache_hit_tokens, or OpenAI's cached_tokens."""
+    usage = response.usage
+    if usage is None:
+        return 0, 0, 0
+    extra = usage.model_extra or {}
+    cached = int(extra.get("prompt_cache_hit_tokens") or getattr(
+        usage.prompt_tokens_details, "cached_tokens", 0) or 0)
+    completion = usage.completion_tokens or 0
+    # Some providers (Gemini) may leave thinking tokens out of completion_tokens but bill them as
+    # output; count whatever total_tokens has beyond prompt + completion as output, so the ledger
+    # never under-counts.
+    total = getattr(usage, "total_tokens", None) or 0
+    completion = max(completion, total - (usage.prompt_tokens or 0))
+    return usage.prompt_tokens, cached, completion
+
+
 def record_llm(span: Span, model: str, messages: list[dict], response, params: dict) -> None:
     """Put an LLM call's inputs, reply, token counts and cost on its span."""
-    attrs: dict = {"llm.model_name": model, "llm.provider": "deepseek",
+    attrs: dict = {"llm.model_name": model, "llm.provider": "google" if model.lower().startswith("gemini") else "deepseek",
                    "llm.invocation_parameters": params}
     for i, m in enumerate(messages):
         attrs.update(_message_attributes("llm.input_messages", i, m))
@@ -219,9 +237,7 @@ def record_llm(span: Span, model: str, messages: list[dict], response, params: d
 
     usage = response.usage
     if usage is not None:
-        extra = usage.model_extra or {}
-        cached = int(extra.get("prompt_cache_hit_tokens") or getattr(
-            usage.prompt_tokens_details, "cached_tokens", 0) or 0)
+        _, cached, _ = usage_counts(response)
         reasoning = int(getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0)
         attrs.update({
             "llm.token_count.prompt": usage.prompt_tokens,

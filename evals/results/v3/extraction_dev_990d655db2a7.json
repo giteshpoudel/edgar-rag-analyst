@@ -1,0 +1,128 @@
+{
+ "split": "dev",
+ "extractor": "990d655db2a7",
+ "blocks": 48,
+ "overall": {
+  "labelled": 31,
+  "extracted": 37,
+  "matched": 24,
+  "precision": 0.6486486486486487,
+  "recall": 0.7741935483870968,
+  "f1": 0.7058823529411764,
+  "matched_ignoring_type": 25
+ },
+ "ci95": {
+  "precision": [
+   0.4,
+   0.875
+  ],
+  "recall": [
+   0.6428571428571429,
+   0.9
+  ],
+  "f1": [
+   0.5,
+   0.8571428571428572
+  ]
+ },
+ "per_type": {
+  "customer_concentration": {
+   "labelled": 6,
+   "extracted": 7,
+   "matched": 6,
+   "precision": 0.8571428571428571,
+   "recall": 1.0
+  },
+  "supplier_dependence": {
+   "labelled": 2,
+   "extracted": 0,
+   "matched": 0,
+   "precision": null,
+   "recall": 0.0
+  },
+  "export_controls_trade": {
+   "labelled": 2,
+   "extracted": 4,
+   "matched": 2,
+   "precision": 0.5,
+   "recall": 1.0
+  },
+  "geographic_exposure": {
+   "labelled": 2,
+   "extracted": 2,
+   "matched": 2,
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "strategic_partnership": {
+   "labelled": 1,
+   "extracted": 1,
+   "matched": 1,
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "capacity_investment": {
+   "labelled": 1,
+   "extracted": 2,
+   "matched": 1,
+   "precision": 0.5,
+   "recall": 1.0
+  },
+  "legal_regulatory": {
+   "labelled": 17,
+   "extracted": 16,
+   "matched": 12,
+   "precision": 0.75,
+   "recall": 0.7058823529411765
+  },
+  "ai_demand": {
+   "labelled": 0,
+   "extracted": 5,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": null
+  }
+ },
+ "per_filing": [
+  {
+   "filing": "NVDA_2026",
+   "labelled": 19,
+   "extracted": 22,
+   "matched": 16,
+   "precision": 0.7272727272727273,
+   "recall": 0.8421052631578947,
+   "f1": 0.7804878048780488,
+   "matched_ignoring_type": 16
+  },
+  {
+   "filing": "NVDA_2025",
+   "labelled": 10,
+   "extracted": 12,
+   "matched": 8,
+   "precision": 0.6666666666666666,
+   "recall": 0.8,
+   "f1": 0.7272727272727272,
+   "matched_ignoring_type": 9
+  },
+  {
+   "filing": "AAPL_2025",
+   "labelled": 1,
+   "extracted": 0,
+   "matched": 0,
+   "precision": null,
+   "recall": 0.0,
+   "f1": null,
+   "matched_ignoring_type": 0
+  },
+  {
+   "filing": "AAPL_2024",
+   "labelled": 1,
+   "extracted": 3,
+   "matched": 0,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": null,
+   "matched_ignoring_type": 0
+  }
+ ]
+}

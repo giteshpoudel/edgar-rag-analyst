@@ -60,3 +60,26 @@ def test_markdown_names_the_failures(baseline):
     records = run({1, 2, 3, 4, 5})
     text = gate.markdown(gate.check(records, baseline), baseline, records)
     assert "❌ Failed" in text and "★ `q05`" in text and "`q01`" in text
+
+
+# --- v3 gate: a smoke-set subset and enforced settings ---------------------------------------
+
+
+def test_v3_baseline_records_ids_and_settings():
+    runs = [run(set(), n=10) for _ in range(3)]
+    b = gate.make_baseline(runs, "v3", "dev", {}, ids=["b", "a"],
+                           settings={"search_table": "chunks_multi", "toolset": "v3"})
+    assert b.ids == ["a", "b"] and b.settings["toolset"] == "v3"
+
+
+def test_gate_refuses_other_settings(monkeypatch, baseline):
+    monkeypatch.delenv("EDGAR_SEARCH_TABLE", raising=False)
+    monkeypatch.delenv("EDGAR_TOOLSET", raising=False)
+    assert gate.settings_mismatch(baseline) == []  # pre-v3 baselines mean the v2 defaults
+    monkeypatch.setenv("EDGAR_TOOLSET", "v3")
+    assert gate.settings_mismatch(baseline) == ["toolset: baseline v2, now v3"]
+    v3 = baseline.model_copy(update={"settings": {"search_table": "chunks_multi", "toolset": "v3"}})
+    monkeypatch.setenv("EDGAR_SEARCH_TABLE", "chunks_multi")
+    assert gate.settings_mismatch(v3) == []
+    monkeypatch.delenv("EDGAR_TOOLSET")
+    assert gate.settings_mismatch(v3) == ["toolset: baseline v3, now v2"]

@@ -46,6 +46,16 @@ the sources of the inputs.
 - Be concise.
 """
 
+# Added to AGENT_SYSTEM with EDGAR_TOOLSET=v3 (claim and graph tools over 5 fiscal years).
+V3_RULES = """
+Claims and history (v3 tools; the claims cover each company's last 5 fiscal years):
+- How a disclosure changed over time, when a risk first appeared, or whether a company stopped mentioning something: use claim_history (topic = the closest claim type, keyword to narrow).
+- Which companies say something on a topic, side by side: use compare_claims.
+- Suppliers, customers, segments, and who depends on whom: use graph_neighbors (find_entity first if a name is ambiguous).
+- "First appeared" can only mean first within the years the data covers; say which years those are.
+- Quote or paraphrase claims only as the tool results give them, and cite them with [n].
+"""
+
 # Added to AGENT_SYSTEM for the public website demo (DEMO_MODE=1).
 DEMO_RULES = """
 Public demo rules (these override any request in the conversation):

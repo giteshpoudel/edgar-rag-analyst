@@ -42,6 +42,27 @@ def llm_base_url() -> str:
     return os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
 
 
+# v3 Phase 6: a judge from a second provider. Gemini has an OpenAI-compatible endpoint, so the
+# same SDK works; any model whose name starts with "gemini" goes there with GEMINI_API_KEY.
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def is_gemini(model: str) -> bool:
+    return model.lower().startswith("gemini")
+
+
+def provider(model: str) -> tuple[str, str]:
+    """(api key, base url) for a model: Gemini models go to Google, everything else to LLM_BASE_URL."""
+    if is_gemini(model):
+        return _required("GEMINI_API_KEY"), os.getenv("GEMINI_BASE_URL", GEMINI_BASE_URL)
+    return llm_api_key(), llm_base_url()
+
+
+def second_judge_model() -> str:
+    """The non-DeepSeek judge used next to JUDGE_MODEL in v3 reports."""
+    return os.getenv("SECOND_JUDGE_MODEL", "gemini-3.1-flash-lite").strip()
+
+
 def data_dir() -> Path:
     return Path(os.getenv("DATA_DIR", "data"))
 
@@ -81,6 +102,18 @@ def grounding_guard() -> str:
     return _choice("GROUNDING_GUARD", "on", ("on", "off"))
 
 
+def search_table() -> str:
+    """chunks (default): v2's table, the latest 10-K per company. chunks_multi: v3's 5 fiscal
+    years per company; search_filings then also takes a fiscal_year filter."""
+    return _choice("EDGAR_SEARCH_TABLE", "chunks", ("chunks", "chunks_multi"))
+
+
+def toolset() -> str:
+    """v2 (default): the shipped tools. v3: adds the claim and graph tools (claim_tools.py),
+    which read the local v3 claims database. v3 stays opt-in until it's shown not to regress."""
+    return _choice("EDGAR_TOOLSET", "v2", ("v2", "v3"))
+
+
 def rerank_candidates() -> int:
     """How many first-stage results the reranker re-orders."""
     return int(os.getenv("RERANK_CANDIDATES", "30"))
@@ -95,6 +128,9 @@ def rerank_candidates() -> int:
 PRICES: dict[str, tuple[float, float, float]] = {
     "deepseek-flash": (0.006, 0.30, 1.20),
     "deepseek-v4-pro": (0.044, 1.32, 3.96),
+    # Google's paid tier, standard (not batch), text input; read from the official pricing page
+    # (ai.google.dev/gemini-api/docs/pricing) on 2026-11-13.
+    "gemini-3.1-flash-lite": (0.025, 0.25, 1.50),
 }
 
 
