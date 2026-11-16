@@ -21,11 +21,16 @@ from edgar_rag.tools import TOOLS, Source, Sources, StagedSources
 
 def active_tools() -> dict:
     """The tools for this run: v2's, plus the claim and graph tools with EDGAR_TOOLSET=v3."""
+    out = TOOLS
+    if config.search_table() == "chunks_multi":
+        from edgar_rag.tools import search_filings_multi
+
+        out = {**out, "search_filings": search_filings_multi()}
     if config.toolset() == "v2":
-        return TOOLS
+        return out
     from edgar_rag import claim_tools
 
-    return {**TOOLS, **{t.name: t for t in claim_tools.tools()}}
+    return {**out, **{t.name: t for t in claim_tools.tools()}}
 
 MAX_STEPS = 6  # LLM calls per question; stops runaway loops
 # Up to this many companies, list them all in the prompt (~15 tokens each). Beyond it the list

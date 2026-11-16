@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from edgar_rag.evaluation import Record, cost_and_latency, summarize
 
 BASELINE_PATH = Path("evals/baseline.json")
+# v3 Phase 7: a second smoke set (v3 dev questions, multi-year search plus the claim tools).
+BASELINE_V3_PATH = Path("evals/baseline_v3.json")
 
 
 class Baseline(BaseModel):
@@ -36,6 +38,22 @@ class Baseline(BaseModel):
     p95_seconds: float | None = None
     created: str
     config: dict
+    ids: list[str] = []  # the smoke set's question ids; empty = the whole split (the v2 gate)
+    settings: dict = {}  # search table and toolset the baseline was built with; the gate refuses others
+
+
+def current_settings() -> dict:
+    from edgar_rag import config
+
+    return {"search_table": config.search_table(), "toolset": config.toolset()}
+
+
+def settings_mismatch(baseline: Baseline) -> list[str]:
+    """Settings that differ from the baseline's: scoring another configuration against it would
+    compare apples with oranges, so the gate stops instead."""
+    expected = baseline.settings or {"search_table": "chunks", "toolset": "v2"}  # older baselines: v2 defaults
+    now = current_settings()
+    return [f"{k}: baseline {v}, now {now.get(k)}" for k, v in expected.items() if now.get(k) != v]
 
 
 class Check(BaseModel):
@@ -67,7 +85,8 @@ def tolerance_for(pass_rates: list[float], questions: int) -> tuple[float, str]:
     return spread + one_question, rule
 
 
-def make_baseline(runs: list[list[Record]], golden: str, split: str, config: dict) -> Baseline:
+def make_baseline(runs: list[list[Record]], golden: str, split: str, config: dict,
+                  ids: list[str] | None = None, settings: dict | None = None) -> Baseline:
     rates = [sum(r.passed for r in run) / len(run) for run in runs]
     questions = len(runs[0])
     tolerance, rule = tolerance_for(rates, questions)
@@ -82,7 +101,7 @@ def make_baseline(runs: list[list[Record]], golden: str, split: str, config: dic
         number_accuracy_floor=round(min(number_acc), 4),
         always_passed=sorted(set.intersection(*passed_sets)),
         cost_per_question=costs["cost_per_question"], p95_seconds=costs["p95_seconds"],
-        created=date.today().isoformat(), config=config,
+        created=date.today().isoformat(), config=config, ids=sorted(ids or []), settings=settings or {},
     )
 
 
@@ -116,13 +135,13 @@ def _fmt(value: float | None, fmt: str) -> str:
     return {"pct": f"{value:.1%}", "int": f"{value:.0f}", "usd": f"${value:.4f}", "sec": f"{value:.1f} s"}[fmt]
 
 
-def markdown(result: GateResult, baseline: Baseline, records: list[Record]) -> str:
+def markdown(result: GateResult, baseline: Baseline, records: list[Record], path: Path = BASELINE_PATH) -> str:
     verdict = "✅ Passed" if result.passed else "❌ Failed"
     lines = [
-        f"## Eval gate: {verdict}",
+        f"## Eval gate{' (v3)' if baseline.golden == 'v3' else ''}: {verdict}",
         "",
         (f"{len(records)} questions ({baseline.golden} {baseline.split} split) compared with "
-        f"`evals/baseline.json` ({baseline.runs} runs, {baseline.created})."),
+        f"`{path}` ({baseline.runs} runs, {baseline.created})."),
         "",
         "| Check | Baseline | This run | Required | |",
         "|---|---|---|---|---|",

@@ -177,13 +177,13 @@ def _parse_verdict(response, key_points: list[str]) -> Judgement:
 # The judge model reasons first; its reasoning tokens need room (300 was not enough).
 # A different, stronger model than the one being graded judges more consistently (D-41).
 # span_name="judge" keeps its cost apart from the system's in reports.
-def judge(question: str, answer: str, key_points: list[str]) -> Judgement:
+def judge(question: str, answer: str, key_points: list[str], model: str | None = None) -> Judgement:
     response = complete(_judge_messages(question, answer, key_points), max_tokens=4000,
-                        model=config.judge_model(), span_name="judge")
+                        model=model or config.judge_model(), span_name="judge")
     return _parse_verdict(response, key_points)
 
 
-async def ajudge(question: str, answer: str, key_points: list[str]) -> Judgement:
+async def ajudge(question: str, answer: str, key_points: list[str], model: str | None = None) -> Judgement:
     response = await acomplete(_judge_messages(question, answer, key_points), max_tokens=4000,
-                               model=config.judge_model(), span_name="judge")
+                               model=model or config.judge_model(), span_name="judge")
     return _parse_verdict(response, key_points)

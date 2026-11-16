@@ -211,8 +211,8 @@ def _load_items(golden: str, split: str | None, only: str | None):
 @app.command(name="eval")
 def run_eval(
     mode: str = typer.Option("both", help="agent, simple, or both"),
-    golden: str = typer.Option("v1", help="Question set: v1 (58) or v2 (198)"),
-    split: str | None = typer.Option(None, help="v2 only: dev, test, regression (comma-separated)"),
+    golden: str = typer.Option("v1", help="Question set: v1 (58), v2 (198) or v3"),
+    split: str | None = typer.Option(None, help="v2/v3: dev, test, regression (comma-separated)"),
     only: str | None = typer.Option(None, help="Comma-separated question ids, e.g. num-01,nar-02"),
     workers: int = typer.Option(16, "--concurrency", "--workers", help="Questions in flight at once"),
     repeat: int = typer.Option(1, help="Runs per mode; >1 reports mean, range and flip rate"),
@@ -230,7 +230,11 @@ def run_eval(
         tag += f"_{retrieval}"
     if config.grounding_guard() == "off":  # the guard is on by default since W3
         tag += "_noguard"
-    typer.echo(f"Retrieval: {retrieval}")
+    if config.search_table() != "chunks":  # v3: searching 5 fiscal years
+        tag += "_multi"
+    if config.toolset() != "v2":  # v3: claim and graph tools
+        tag += f"_{config.toolset()}"
+    typer.echo(f"Retrieval: {retrieval}, table {config.search_table()}, toolset {config.toolset()}")
     if repeat > 1:
         _repeat_runs(modes, items, workers, repeat, out_dir, tag)
         return
@@ -289,6 +293,61 @@ def _repeat_runs(modes, items, workers, repeat, out_dir, tag) -> None:
 
 
 @app.command()
+def rescore(
+    files: list[Path] = typer.Argument(..., help="Stored answer files (.jsonl) to score again"),  # noqa: B008
+    golden: str = typer.Option("v3", help="Question set the answers belong to"),
+    judge: str | None = typer.Option(None, help="Judge model (default JUDGE_MODEL); e.g. gemini-3.1-flash-lite"),
+    concurrency: int = typer.Option(8, help="Judge calls in flight at once"),
+) -> None:
+    """Score stored answers again (no new answers): numbers and years against the current golden
+    set, key points with the chosen judge. Writes <file>__<judge>.jsonl next to each input."""
+    import asyncio
+
+    from edgar_rag import evaluation
+
+    judge_model = judge or config.judge_model()
+    items = {i.id: i for i in evaluation.load_golden(evaluation.GOLDEN_SETS[golden])}
+    for path in files:
+        records = evaluation.load_records(path)
+        before = sum(r.passed for r in records)
+        rescored = asyncio.run(evaluation.arescore(records, items, judge_model, concurrency))
+        out = path.with_name(f"{path.stem}__{judge_model}.jsonl")
+        out.write_text("".join(r.model_dump_json() + "\n" for r in rescored))
+        changed = [r.id for r, old in zip(rescored, records, strict=True) if r.passed != old.passed]
+        typer.echo(f"{path.name}: {before}/{len(records)} -> {sum(r.passed for r in rescored)}/{len(rescored)} "
+                   f"passed with {judge_model} · saved {out.name}")
+        if changed:
+            typer.echo(f"  changed: {', '.join(changed)}")
+        table = evaluation.summary_markdown({"agent": evaluation.summarize(rescored)}, config.llm_model(), judge_model)
+        out.with_suffix(".md").write_text(table)
+
+
+@app.command(name="judge-calibrate")
+def judge_calibrate(
+    judge: list[str] = typer.Option([], help="Judge model(s) to run over the reference set; omit to only report"),  # noqa: B008
+    concurrency: int = typer.Option(8, help="Judge calls in flight at once"),
+) -> None:
+    """v3 Phase 6: grade the 80 reference answers with each judge, then report agreement and
+    Cohen's kappa against the blind reference grades and between judges."""
+    import asyncio
+    import json
+
+    from edgar_rag import calibration as cal
+
+    rows = cal.load_reference()
+    for model in judge:
+        verdicts = asyncio.run(cal.ajudge_all(rows, model, concurrency))
+        cal.verdicts_path(model).write_text("".join(json.dumps(v) + "\n" for v in verdicts))
+        typer.echo(f"{model}: {len(verdicts)} verdicts, {sum(bool(v['error']) for v in verdicts)} judge errors")
+    graders = {cal.REFERENCE_NAME: cal.reference_grades(rows)}
+    for path in sorted(cal.DIR.glob("verdicts_*.jsonl")):
+        graders[path.stem.removeprefix("verdicts_")] = cal.load_verdicts(path.stem.removeprefix("verdicts_"))
+    text = cal.report(rows, graders)
+    (cal.DIR / "report.md").write_text(text)
+    typer.echo(text)
+
+
+@app.command()
 def compare(
     a: str = typer.Argument(..., help="Result files for config A, a glob such as 'agent_dev+test_run*'"),
     b: str = typer.Argument(..., help="Result files for config B"),
@@ -326,13 +385,44 @@ def compare(
     typer.echo(f"B - A = {c.diff:+.1%}, 95% CI [{c.ci_low:+.1%}, {c.ci_high:+.1%}] over {c.questions} questions: {verdict}")
 
 
+@app.command(name="v3-report")
+def v3_report(
+    a: str = typer.Option("agent_test_multi_run[0-9]", help="v2 baseline run files (glob in evals/results/v3/answers)"),
+    b: str = typer.Option("agent_test_multi_v3_run[0-9]", help="v3 run files"),
+    judges: list[str] = typer.Option([], help="Extra judges whose rescored files (<run>__<judge>.jsonl) exist"),  # noqa: B008
+) -> None:
+    """v3 Phase 5b: the v2-vs-v3 test report, one section per judge, written to
+    evals/results/v3/v2_vs_v3_test.md."""
+    from edgar_rag import evaluation, v3_report
+
+    out_dir = evaluation.results_dir("v3")
+    sections = []
+    for judge in [config.judge_model(), *judges]:
+        suffix = "" if judge == config.judge_model() else f"__{judge}"
+        files_a = sorted(out_dir.glob(f"{a}{suffix}.jsonl"))
+        files_b = sorted(out_dir.glob(f"{b}{suffix}.jsonl"))
+        if not files_a or len(files_a) != len(files_b):
+            raise typer.BadParameter(f"{judge}: found {len(files_a)} A and {len(files_b)} B run files")
+        runs_a, runs_b = v3_report.load_runs(files_a), v3_report.load_runs(files_b)
+        sections.append(v3_report.section("v2 baseline", runs_a, "v3", runs_b, judge))
+        if not suffix:
+            cost = v3_report.cost_section("v2 baseline", runs_a, "v3", runs_b)
+    text = "# v2 vs v3 on the v3 test set\n\n" + "\n".join(sections) + "\n" + cost
+    (out_dir.parent / "v2_vs_v3_test.md").write_text(text)
+    typer.echo(text)
+
+
 @app.command(name="make-baseline")
 def make_baseline(
     runs: str = typer.Argument(..., help="Repeat-run result files, a glob such as 'agent_dev_run*'"),
     golden: str = typer.Option("v2", help="Which results folder"),
     split: str = typer.Option("dev", help="The split those runs cover (the gate's smoke set)"),
+    out: str = typer.Option("evals/baseline.json", help="Baseline file (evals/baseline_v3.json for the v3 gate)"),
 ) -> None:
-    """Build evals/baseline.json for the CI gate from repeated runs of the same code."""
+    """Build a CI gate baseline from repeated runs of the same code (the runs' question ids become
+    the smoke set; the search table and toolset are recorded and enforced by the gate)."""
+    from pathlib import Path
+
     from edgar_rag import evaluation, gate
 
     files = sorted(evaluation.results_dir(golden).glob(runs + ("" if runs.endswith(".jsonl") else ".jsonl")))
@@ -343,9 +433,13 @@ def make_baseline(
     cfg = {"model": config.llm_model(), "judge": config.judge_model(),
            "retrieval": config.retrieval_mode(), "reranker": config.reranker(),
            "grounding_guard": config.grounding_guard(), "files": [f.name for f in files]}
-    baseline = gate.make_baseline(loaded, golden, split, cfg)
-    gate.save_baseline(baseline)
-    typer.echo(f"Wrote {gate.BASELINE_PATH}: pass rate {baseline.pass_rate:.1%} over {baseline.runs} runs "
+    ids = [r.id for r in loaded[0]]
+    split_ids = {i.id for i in _load_items(golden, split, None)}
+    subset = set(ids) != split_ids
+    baseline = gate.make_baseline(loaded, golden, split, cfg, ids=ids if subset else None,
+                                  settings=gate.current_settings())
+    gate.save_baseline(baseline, Path(out))
+    typer.echo(f"Wrote {out}: pass rate {baseline.pass_rate:.1%} over {baseline.runs} runs "
                f"{[f'{r:.1%}' for r in baseline.pass_rates]}, tolerance {baseline.tolerance:.1%}, "
                f"number accuracy floor {baseline.number_accuracy_floor:.1%}")
 
@@ -354,21 +448,27 @@ def make_baseline(
 def run_gate(
     concurrency: int = typer.Option(16, help="Questions in flight at once"),
     out: str = typer.Option("evals/results/ci", help="Where to save this run's records"),
+    baseline_path: str = typer.Option("evals/baseline.json", "--baseline",
+                                      help="evals/baseline.json (v2 gate) or evals/baseline_v3.json (v3 gate)"),
 ) -> None:
-    """Run the smoke set and compare with evals/baseline.json; exit 1 if it regressed (CI)."""
+    """Run the smoke set and compare with its baseline; exit 1 if it regressed (CI)."""
     import os
     from pathlib import Path
 
     from edgar_rag import evaluation, gate
 
-    baseline = gate.load_baseline()
-    items = _load_items(baseline.golden, baseline.split, None)
+    baseline = gate.load_baseline(Path(baseline_path))
+    mismatch = gate.settings_mismatch(baseline)
+    if mismatch:
+        typer.echo(f"Settings don't match {baseline_path}: {'; '.join(mismatch)}", err=True)
+        raise typer.Exit(1)
+    items = _load_items(baseline.golden, baseline.split, ",".join(baseline.ids) if baseline.ids else None)
     if len(items) != baseline.questions:
         typer.echo(f"Note: smoke set has {len(items)} questions, baseline was built on {baseline.questions}")
     records = evaluation.run("agent", items, workers=concurrency)
-    evaluation.save(records, "agent", Path(out), "_gate")
+    evaluation.save(records, "agent", Path(out), "_gate" + ("_v3" if baseline.golden == "v3" else ""))
     result = gate.check(records, baseline)
-    report = gate.markdown(result, baseline, records)
+    report = gate.markdown(result, baseline, records, Path(baseline_path))
     typer.echo(report)
     summary = os.getenv("GITHUB_STEP_SUMMARY")  # GitHub Actions shows this file on the run page
     if summary:

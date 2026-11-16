@@ -33,6 +33,8 @@ CATEGORIES = (
     # v2 hard round
     "table_calc", "cross_company", "enumeration",
     "unanswerable",
+    # v3: time and relationship questions over 5 fiscal years
+    "first_appeared", "wording_change", "dropped", "shared_entity", "multi_year", "mixed_claim",
 )
 # Categories where the right answer is to decline (near_miss = plausible-looking but unanswerable).
 REFUSAL_CATEGORIES = ("unanswerable", "near_miss")
@@ -44,6 +46,7 @@ class GoldenItem(BaseModel):
         "numeric", "narrative", "mixed", "comparison", "trend", "sector",
         "multi_hop", "long_tail", "text_table", "ambiguous", "near_miss",
         "table_calc", "cross_company", "enumeration", "unanswerable",
+        "first_appeared", "wording_change", "dropped", "shared_entity", "multi_year", "mixed_claim",
     ]
     question: str
     expected_numbers: list[Expected] = []
@@ -54,7 +57,8 @@ class GoldenItem(BaseModel):
     split: Literal["regression", "dev", "test"] | None = None  # regression = v1's 58 questions
     evidence: list[Evidence] = []  # gold quotes for recall@k (D-52)
     companies: list[str] = []  # tickers the question is about
-    source: Literal["v1", "generated", "template"] | None = None
+    source: Literal["v1", "generated", "template", "drafted"] | None = None  # drafted: v3, from raw filing diffs
+    expected_years: list[int] = []  # v3: fiscal years the answer must name (checked deterministically)
     verified: bool = False  # set only after checking against the filing / XBRL
     notes: str = ""  # how it was verified, or why it's unanswerable
     tags: list[str] = []  # e.g. "paraphrased"
@@ -74,6 +78,7 @@ class Record(BaseModel):
     completion_tokens: int
     seconds: float
     numbers_found: list[bool]
+    years_found: list[bool] = []  # v3: each expected fiscal year named in the answer
     retrieval_hit: bool | None
     reciprocal_rank: float | None
     key_points_covered: list[bool]
@@ -116,7 +121,11 @@ def _chunk_index() -> dict:
     from edgar_rag.chunking import Chunk
 
     index = {}
-    for path in (config.data_dir() / "processed").glob("*/*.chunks.jsonl"):
+    # v2's latest-year chunks, plus v3's five fiscal years (chunk ids carry the accession, so
+    # earlier years' chunks are only in processed_multi).
+    paths = [*(config.data_dir() / "processed").glob("*/*.chunks.jsonl"),
+             *(config.data_dir() / "processed_multi").glob("*/*.chunks.jsonl")]
+    for path in paths:
         for line in path.read_text().splitlines():
             c = Chunk.model_validate_json(line)
             index[c.chunk_id] = c
@@ -207,6 +216,49 @@ async def _run_mode(question: str, mode: Mode) -> dict:
     }
 
 
+def year_named(year: int, answer: str) -> bool:
+    """The fiscal year appears in the answer as a year ("FY2023", "fiscal 2023", "2023")."""
+    import re
+
+    return re.search(rf"(?<!\d){year}(?!\d)", answer) is not None
+
+
+def _passed(item: GoldenItem, numbers: list[bool], years: list[bool], covered: list[bool], refused: bool,
+            error: str) -> bool:
+    """The pass rule, shared by live runs and rescoring."""
+    if item.category in REFUSAL_CATEGORIES:
+        return refused
+    coverage_ok = not item.key_points or sum(covered) / len(covered) >= PASS_COVERAGE
+    return all(numbers) and all(years) and coverage_ok and not refused and not error
+
+
+async def arescore(records: list[Record], items: dict[str, GoldenItem], judge_model: str | None = None,
+                   concurrency: int = 8) -> list[Record]:
+    """Score stored answers again without re-running the system: numbers and years against the
+    current golden items, key points and refusal with `judge_model`. Used to fix scoring after a
+    golden-item correction and to grade the same answers with a second judge (v3 Phase 6)."""
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(r: Record) -> Record:
+        item = items[r.id]
+        numbers = [number_found(e, r.answer) for e in item.expected_numbers]
+        years = [year_named(y, r.answer) for y in item.expected_years]
+        async with gate:
+            verdict = await ajudge(item.question, r.answer, item.key_points, model=judge_model) if r.answer else None
+        covered = verdict.key_points if verdict else [False] * len(item.key_points)
+        refused = verdict.refused if verdict else True
+        return r.model_copy(update={
+            "numbers_found": numbers, "years_found": years, "key_points_covered": covered, "refused": refused,
+            "judge_error": verdict.error if verdict else "", "judge_cost_usd": None,  # the ledger has the new cost
+            "passed": _passed(item, numbers, years, covered, refused, r.error)})
+
+    return list(await asyncio.gather(*(one(r) for r in records)))
+
+
+def load_records(path: Path) -> list[Record]:
+    return [Record.model_validate_json(line) for line in path.read_text().splitlines() if line.strip()]
+
+
 def evaluate_one(item: GoldenItem, mode: Mode) -> Record:
     return asyncio.run(aevaluate_one(item, mode))
 
@@ -257,6 +309,7 @@ async def _evaluate(item: GoldenItem, mode: Mode) -> Record:
 
     grounding = ground(answer, sources_text, item.question)
     numbers = [number_found(e, answer) for e in item.expected_numbers]
+    years = [year_named(y, answer) for y in item.expected_years]
     hit, rr = (None, None)
     if item.expected_items:
         hit, rr = retrieval_scores(out["retrieved_items"], item.expected_items)
@@ -264,15 +317,11 @@ async def _evaluate(item: GoldenItem, mode: Mode) -> Record:
     covered = verdict.key_points if verdict else [False] * len(item.key_points)
     refused = verdict.refused if verdict else True
 
-    if item.category in REFUSAL_CATEGORIES:
-        passed = refused
-    else:
-        coverage_ok = not item.key_points or sum(covered) / len(covered) >= PASS_COVERAGE
-        passed = all(numbers) and coverage_ok and not refused and not error
+    passed = _passed(item, numbers, years, covered, refused, error)
 
     return Record(
         id=item.id, category=item.category, mode=mode, question=item.question, **out,
-        seconds=round(seconds, 1), numbers_found=numbers, retrieval_hit=hit,
+        seconds=round(seconds, 1), numbers_found=numbers, years_found=years, retrieval_hit=hit,
         reciprocal_rank=rr, key_points_covered=covered, refused=refused, passed=passed,
         judge_error=verdict.error if verdict else "", evidence_seen=seen,
         numbers_stated=len(grounding.claims), unsupported_numbers=[c.raw for c in grounding.unsupported],
@@ -371,7 +420,7 @@ def cost_and_latency(records: list[Record]) -> dict:
     return {
         "cost_per_question": _mean(costs) if known else None,
         "cost_per_1000_questions": _mean(costs) * 1000 if known else None,
-        "judge_cost_per_question": _mean([r.judge_cost_usd for r in traced]) if traced else None,
+        "judge_cost_per_question": _mean([r.judge_cost_usd for r in traced if r.judge_cost_usd is not None]),
         "avg_llm_calls": _mean([r.llm_calls for r in traced]) if traced else None,
         "cache_hit_share": (sum(r.cached_prompt_tokens for r in traced) / max(1, sum(r.prompt_tokens for r in traced))
                             if traced else None),
@@ -407,6 +456,12 @@ ROWS = [
     ("Same topic across several companies", "pass_cross_company", "pct"),
     ("Complete enumerations (4+ items)", "pass_enumeration", "pct"),
     ("Unanswerable (refused correctly)", "pass_unanswerable", "pct"),
+    ("v3: when a topic first appeared", "pass_first_appeared", "pct"),
+    ("v3: when a topic was dropped", "pass_dropped", "pct"),
+    ("v3: wording change between years", "pass_wording_change", "pct"),
+    ("v3: one figure across 5 years", "pass_multi_year", "pct"),
+    ("v3: companies sharing an entity", "pass_shared_entity", "pct"),
+    ("v3: claim plus figure", "pass_mixed_claim", "pct"),
     ("Gold evidence in passages seen", "evidence_seen", "pct"),
     ("Number accuracy", "number_accuracy", "pct"),
     ("Retrieval hit rate (right section retrieved)", "retrieval_hit_rate", "pct"),
@@ -459,12 +514,16 @@ def summary_markdown(summaries: dict[str, dict], model: str, judge: str, timing:
     return "\n".join(lines) + "\n"
 
 
-GOLDEN_SETS = {"v1": EVALS_DIR / "golden.jsonl", "v2": EVALS_DIR / "golden_v2.jsonl"}
+GOLDEN_SETS = {"v1": EVALS_DIR / "golden.jsonl", "v2": EVALS_DIR / "golden_v2.jsonl",
+               "v3": EVALS_DIR / "v3" / "golden_v3.jsonl"}
 
 
 def results_dir(golden: str) -> Path:
-    """v1 results stay where they were; v2 results go in their own folder."""
-    return EVALS_DIR / "results" if golden == "v1" else EVALS_DIR / "results" / golden
+    """v1 results stay where they were; v2 results go in their own folder; v3 answers go in
+    evals/results/v3/answers, apart from the extraction and link reports."""
+    if golden == "v1":
+        return EVALS_DIR / "results"
+    return EVALS_DIR / "results" / "v3" / "answers" if golden == "v3" else EVALS_DIR / "results" / golden
 
 
 def save(records: list[Record], mode: Mode, out_dir: Path | None = None, tag: str = "") -> Path:

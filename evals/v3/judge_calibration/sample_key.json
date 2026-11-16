@@ -1,0 +1,422 @@
+[
+ {
+  "cid": "C01",
+  "system": "v2",
+  "id": "v3-word-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C02",
+  "system": "v2",
+  "id": "v3-first-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C03",
+  "system": "v2",
+  "id": "v3-multi-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C04",
+  "system": "v3",
+  "id": "v3-shared-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C05",
+  "system": "v2",
+  "id": "v3-first-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C06",
+  "system": "v2",
+  "id": "v3-una-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C07",
+  "system": "v2",
+  "id": "v3-first-11",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C08",
+  "system": "v2",
+  "id": "v3-una-08",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C09",
+  "system": "v2",
+  "id": "v3-drop-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C10",
+  "system": "v2",
+  "id": "v3-first-16",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C11",
+  "system": "v2",
+  "id": "v3-first-08",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C12",
+  "system": "v2",
+  "id": "v3-mixed-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C13",
+  "system": "v3",
+  "id": "v3-word-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C14",
+  "system": "v3",
+  "id": "v3-first-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C15",
+  "system": "v2",
+  "id": "v3-drop-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C16",
+  "system": "v3",
+  "id": "v3-first-11",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C17",
+  "system": "v2",
+  "id": "v3-multi-08",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C18",
+  "system": "v3",
+  "id": "v3-una-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C19",
+  "system": "v3",
+  "id": "v3-multi-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C20",
+  "system": "v2",
+  "id": "v3-una-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C21",
+  "system": "v2",
+  "id": "v3-first-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C22",
+  "system": "v3",
+  "id": "v3-drop-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C23",
+  "system": "v3",
+  "id": "v3-drop-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C24",
+  "system": "v3",
+  "id": "v3-drop-11",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C25",
+  "system": "v3",
+  "id": "v3-shared-08",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C26",
+  "system": "v3",
+  "id": "v3-mixed-03",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C27",
+  "system": "v2",
+  "id": "v3-mixed-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi.jsonl"
+ },
+ {
+  "cid": "C28",
+  "system": "v3",
+  "id": "v3-una-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C29",
+  "system": "v3",
+  "id": "v3-word-01",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C30",
+  "system": "v3",
+  "id": "v3-shared-06",
+  "golden": "v3",
+  "file": "evals/results/v3/answers/agent_dev_multi_v3.jsonl"
+ },
+ {
+  "cid": "C31",
+  "system": "v2-set",
+  "id": "long-013",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C32",
+  "system": "v2-set",
+  "id": "mult-003",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C33",
+  "system": "v2-set",
+  "id": "near-014",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C34",
+  "system": "v2-set",
+  "id": "amb-006",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C35",
+  "system": "v2-set",
+  "id": "near-004",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C36",
+  "system": "v2-set",
+  "id": "near-010",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C37",
+  "system": "v2-set",
+  "id": "text-019",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C38",
+  "system": "v2-set",
+  "id": "near-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C39",
+  "system": "v2-set",
+  "id": "long-003",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C40",
+  "system": "v2-set",
+  "id": "wtab-009",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C41",
+  "system": "v2-set",
+  "id": "wder-004",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C42",
+  "system": "v2-set",
+  "id": "wtab-002",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C43",
+  "system": "v2-set",
+  "id": "text-026",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C44",
+  "system": "v2-set",
+  "id": "amb-008",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C45",
+  "system": "v2-set",
+  "id": "xco-002",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C46",
+  "system": "v2-set",
+  "id": "calc-010",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C47",
+  "system": "v2-set",
+  "id": "calc-012",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C48",
+  "system": "v2-set",
+  "id": "calc-008",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C49",
+  "system": "v2-set",
+  "id": "hnum-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C50",
+  "system": "v2-set",
+  "id": "text-017",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C51",
+  "system": "v2-set",
+  "id": "amb-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C52",
+  "system": "v2-set",
+  "id": "narr-020",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C53",
+  "system": "v2-set",
+  "id": "wxct-003",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C54",
+  "system": "v2-set",
+  "id": "calc-003",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C55",
+  "system": "v2-set",
+  "id": "mult-014",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C56",
+  "system": "v2-set",
+  "id": "mult-022",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C57",
+  "system": "v2-set",
+  "id": "text-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C58",
+  "system": "v2-set",
+  "id": "narr-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C59",
+  "system": "v2-set",
+  "id": "calc-007",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ },
+ {
+  "cid": "C60",
+  "system": "v2-set",
+  "id": "narr-015",
+  "golden": "v2",
+  "file": "evals/results/v2/agent_dev_run1.jsonl"
+ }
+]

@@ -28,17 +28,37 @@ def _client() -> OpenAI:
                   max_retries=0, timeout=TIMEOUT_SECONDS)
 
 
+@lru_cache(maxsize=1)
+def _gemini_client() -> OpenAI:
+    api_key, base_url = config.provider("gemini")
+    return OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=TIMEOUT_SECONDS)
+
+
+def _client_for(model: str) -> OpenAI:
+    """DeepSeek by default; Gemini (the v3 second judge) for models named gemini-*."""
+    return _gemini_client() if config.is_gemini(model) else _client()
+
+
 # An async client's connections belong to the event loop that opened them, so each loop gets
 # its own (reusing one across asyncio.run() calls fails with "Event loop is closed").
-_async_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncOpenAI]" = weakref.WeakKeyDictionary()
+_async_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = weakref.WeakKeyDictionary()
+
+
+def _async_client(provider: str) -> AsyncOpenAI:
+    loop = asyncio.get_running_loop()
+    per_loop = _async_clients.setdefault(loop, {})
+    if provider not in per_loop:
+        api_key, base_url = config.provider(provider if provider == "gemini" else config.llm_model())
+        per_loop[provider] = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=TIMEOUT_SECONDS)
+    return per_loop[provider]
 
 
 def _aclient() -> AsyncOpenAI:
-    loop = asyncio.get_running_loop()
-    if loop not in _async_clients:
-        _async_clients[loop] = AsyncOpenAI(api_key=config.llm_api_key(), base_url=config.llm_base_url(),
-                                           max_retries=0, timeout=TIMEOUT_SECONDS)
-    return _async_clients[loop]
+    return _async_client("default")
+
+
+def _aclient_for(model: str) -> AsyncOpenAI:
+    return _async_client("gemini") if config.is_gemini(model) else _aclient()
 
 
 def _request(messages: list[dict], tools, max_tokens: int, model: str, tool_choice,
@@ -75,7 +95,7 @@ def complete(
     # calling if that could cross EDGAR_BUDGET_USD (see budget.py).
     with budget.reserve(model, messages, tools, max_tokens, span_name) as reservation, \
             tracing.span(span_name, "LLM") as span:
-        response = retry.call(lambda: _client().chat.completions.create(**kwargs))
+        response = retry.call(lambda: _client_for(model).chat.completions.create(**kwargs))
         reservation.settle(response)
         tracing.record_llm(span, model, messages, response, params)
     return response
@@ -97,7 +117,7 @@ async def acomplete(
     # calling if that could cross EDGAR_BUDGET_USD (see budget.py).
     with budget.reserve(model, messages, tools, max_tokens, span_name) as reservation, \
             tracing.span(span_name, "LLM") as span:
-        response = await retry.acall(lambda: _aclient().chat.completions.create(**kwargs))
+        response = await retry.acall(lambda: _aclient_for(model).chat.completions.create(**kwargs))
         reservation.settle(response)
         tracing.record_llm(span, model, messages, response, params)
     return response

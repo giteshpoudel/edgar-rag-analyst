@@ -80,6 +80,13 @@ class SearchFilingsArgs(BaseModel):
     )
 
 
+class SearchFilingsMultiArgs(SearchFilingsArgs):
+    """search_filings over the multi-year table (EDGAR_SEARCH_TABLE=chunks_multi)."""
+
+    fiscal_year: int | None = Field(
+        None, description="Limit to one fiscal year's 10-K, e.g. 2023. Omit to search all indexed years.")
+
+
 class GetMetricArgs(BaseModel):
     ticker: str = Field(description="Stock ticker, e.g. 'AAPL'.")
     metric: MetricName = Field(description="Which financial metric.")
@@ -131,7 +138,8 @@ def _not_allowed(ticker: str | None) -> str | None:
 def search_filings(args: SearchFilingsArgs, sources: Sources) -> str:
     if error := _not_allowed(args.ticker):
         return error
-    results = search(args.query, k=5, ticker=args.ticker, item=args.item)
+    results = search(args.query, k=5, ticker=args.ticker, item=args.item,
+                     fiscal_year=getattr(args, "fiscal_year", None))
     if not results:
         return "No matching passages."
     blocks = []
@@ -303,3 +311,12 @@ TOOLS: dict[str, Tool] = {
         ),
     ]
 }
+
+
+def search_filings_multi() -> Tool:
+    """search_filings for the multi-year table: the same tool with a fiscal_year filter."""
+    return TOOLS["search_filings"].model_copy(update={
+        "args_model": SearchFilingsMultiArgs,
+        "description": TOOLS["search_filings"].description + " Covers each company's last 5 fiscal years; "
+        "pass fiscal_year to search one year's 10-K.",
+    })

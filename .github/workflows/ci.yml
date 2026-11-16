@@ -1,6 +1,8 @@
 # CI regression gate (W6). Every pull request: lint and offline unit tests, then the eval gate,
 # which answers the dev split (48 questions) with the real model on a frozen data snapshot and
 # fails if scores drop below evals/baseline.json. Branch protection on main requires both jobs.
+# v3 (Phase 7): the same job then runs a v3 smoke set (10 dev questions, 5-year search plus claim
+# tools) on a checksummed add-on snapshot, against evals/baseline_v3.json.
 name: CI
 
 on:
@@ -81,6 +83,21 @@ jobs:
           tar -xzf edgar-ci-data.tar.gz
       - name: Run the gate (scores go to the job summary)
         run: edgar gate --concurrency 16
+      - name: Download the v3 data add-on (5-year index and claims database)
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_DATA_V3_RELEASE: ci-data-v2
+        run: |
+          gh release download "$CI_DATA_V3_RELEASE" --pattern edgar-ci-data-v3.tar.gz
+          scripts/ci_data.sh check-v3 edgar-ci-data-v3.tar.gz
+          tar -xzf edgar-ci-data-v3.tar.gz
+      - name: Run the v3 gate
+        if: success() || failure()
+        env:
+          EDGAR_SEARCH_TABLE: chunks_multi
+          EDGAR_TOOLSET: v3
+        run: edgar gate --baseline evals/baseline_v3.json --concurrency 16
       - name: Keep per-question results
         if: always()
         uses: actions/upload-artifact@v4

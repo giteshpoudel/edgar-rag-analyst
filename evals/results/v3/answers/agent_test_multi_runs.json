@@ -1,0 +1,22 @@
+{
+  "runs": 3,
+  "questions": 47,
+  "pass_rates": [
+    0.8723,
+    0.8085,
+    0.8085
+  ],
+  "mean": 0.8297872340425533,
+  "low": 0.8085106382978723,
+  "high": 0.8723404255319149,
+  "flip_rate": 0.19148936170212766,
+  "cost_per_question": 0.0040540921985815605,
+  "cost_per_1000_questions": 4.054092198581561,
+  "judge_cost_per_question": 0.002353744680851063,
+  "avg_llm_calls": 3.652482269503546,
+  "cache_hit_share": 0.676551907056951,
+  "p50_seconds": 8.8,
+  "p95_seconds": 21.5,
+  "llm_time_share": 0.982412260333045,
+  "retrieval_time_share": 0.03487693226298681
+}

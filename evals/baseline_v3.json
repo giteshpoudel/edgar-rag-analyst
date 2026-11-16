@@ -1,0 +1,61 @@
+{
+  "golden": "v3",
+  "split": "dev",
+  "questions": 10,
+  "runs": 5,
+  "pass_rates": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.9
+  ],
+  "pass_rate": 0.98,
+  "tolerance": 0.18,
+  "tolerance_rule": "widest drop of a baseline run below the mean (8.0%) + one question (10.0%)",
+  "number_accuracy_floor": 1.0,
+  "always_passed": [
+    "v3-drop-01",
+    "v3-drop-08",
+    "v3-first-03",
+    "v3-first-06",
+    "v3-mixed-06",
+    "v3-shared-01",
+    "v3-una-01",
+    "v3-una-11",
+    "v3-word-01"
+  ],
+  "cost_per_question": 0.00294104,
+  "p95_seconds": 14.829999999999998,
+  "created": "2026-11-13",
+  "config": {
+    "model": "deepseek-flash",
+    "judge": "deepseek-v4-pro",
+    "retrieval": "hybrid",
+    "reranker": "none",
+    "grounding_guard": "on",
+    "files": [
+      "agent_dev_multi_v3_run1.jsonl",
+      "agent_dev_multi_v3_run2.jsonl",
+      "agent_dev_multi_v3_run3.jsonl",
+      "agent_dev_multi_v3_run4.jsonl",
+      "agent_dev_multi_v3_run5.jsonl"
+    ]
+  },
+  "ids": [
+    "v3-drop-01",
+    "v3-drop-08",
+    "v3-first-03",
+    "v3-first-06",
+    "v3-mixed-06",
+    "v3-multi-11",
+    "v3-shared-01",
+    "v3-una-01",
+    "v3-una-11",
+    "v3-word-01"
+  ],
+  "settings": {
+    "search_table": "chunks_multi",
+    "toolset": "v3"
+  }
+}

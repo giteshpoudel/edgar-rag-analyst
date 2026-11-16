@@ -2,7 +2,7 @@
 
 v2 answers questions about one 10-K per company. v3 adds **time** (how a company's disclosures change across years) and **relationships** (how companies connect through shared customers, suppliers and risks), then measures where structured claims and a graph beat v2's hybrid retrieval, and reports where they don't.
 
-**Status:** plan approved 2026-11-06. Phases 0 and 1 done (on branch `v3`, not merged yet).
+**Status:** plan approved 2026-11-06. Phases 0–4, 5a and 5b done; Phase 6 waits for the Gemini key; Phase 7 waits for the `ci-data-v2` release (branch `v3`, PR #6, not merged yet).
 
 ## Why v3
 
@@ -582,3 +582,81 @@ The ledger's cap starts at `EDGAR_BUDGET_USD=10`.
 **Done-when status:** offline tests cover every tool, including caps, empty results and citations. The v2 gate with the default toolset runs in CI when this is pushed, since the default path is unchanged apart from the `active_tools()` lookup.
 
 **Spend so far:** $1.71 of $10 (list prices; includes the PR #6 CI gate, recorded as an estimated $0.12).
+
+### Phase 5a progress (2026-11-13)
+
+**Question set:** [evals/v3/golden_v3.jsonl](evals/v3/golden_v3.jsonl), 81 questions, built and re-verified by [evals/v3/build_golden_v3.py](evals/v3/build_golden_v3.py) (the script refuses to write the file if any check fails).
+
+| Category | Dev | Test | How each item is verified |
+|---|---|---|---|
+| first_appeared | 7 | 10 | phrase absent from every earlier year in the data, present in the stated one |
+| dropped | 5 | 7 | present in the stated last year, absent from every later one |
+| shared_entity | 4 | 4 | each "yes" company's latest Item 1A/7 names it; each "no" company's doesn't (alternate names checked too) |
+| multi_year | 5 | 7 | one disclosed figure in all five filings (sentence chains across years) |
+| wording_change | 4 | 6 | the same disclosure, reworded between two filings |
+| mixed_claim | 4 | 6 | a narrative claim plus a figure from the same filing |
+| unanswerable | 5 | 7 | year or company outside the data, or never disclosed |
+
+- **Not drafted from the claims database:** facts come from `drafting.py` over the raw 10-K HTML (Items 1A/7): phrase-by-year counts, sentence diffs between years, and sentence chains whose figures change across years. Every gold quote is checked verbatim in its fiscal year.
+- **Split:** stratified by category, 34 dev and 47 test.
+- **Scoring:** `expected_years` adds a deterministic check that each year is named in the answer. Whole-number percents get ±0.5 points (filings say "approximately 91%"; an agent may compute 91.2%), one-decimal percents ±0.05.
+- **Switches:** `EDGAR_SEARCH_TABLE=chunks_multi` makes the v2 agent search all five years (with a `fiscal_year` filter); `EDGAR_TOOLSET=v3` adds the claim tools. The v2 baseline for v3 is the first alone.
+
+**Gold errors found on dev and fixed (no system change, no threshold change):**
+- AMD and the EU AI Act: the FY2023 filing already says "in the EU, an AI act is being considered", which the exact-phrase probe missed. Both systems answered FY2023; the gold said FY2024. Now FY2023.
+- TXN and the CHIPS Act: the FY2022 MD&A names the "CHIPS and Science Act". Now FY2022.
+- Percent tolerance of 0.05 points marked computed values (91.2% for "approximately 91%") wrong. Now as above.
+- A Qualcomm item required growth percentages the question never asked for.
+- After these, dev answers were rescored (`edgar rescore`) without re-answering.
+
+**Dev results** (single runs, judge `deepseek-v4-pro`, after the gold fixes): v2 baseline 30–31/34 (two rescorings of the same answers differed by one judge verdict), v3 34/34. Cost $0.004 per answer plus $0.002 judge.
+
+**Done-when status:** set labelled and split; dev reported per category. **Not met:** "v2 scores low enough on dev to leave room to measure". The v2 agent searching all five years already passes about 90% of dev. Plain hybrid search over multi-year chunks is a strong baseline for these questions; that is a result, and the questions were not made harder after seeing it.
+
+**Eval bug found:** the "gold evidence in passages seen" metric looked chunk text up only in `data/processed` (latest year), so earlier years' chunks were never found and the metric under-counted on v3 runs (42–50% on dev). Fixed to read `data/processed_multi` too; it is not part of pass/fail. The Phase 5b test runs started before the fix, so their evidence metric is not reported.
+
+### Phase 6 progress (2026-11-13)
+
+**Judge choice:** Google `gemini-3.1-flash-lite`, the cheapest current Flash-tier model on Google's official pricing page on 2026-11-13: $0.25 input, $1.50 output, $0.025 cached input per 1M tokens (paid tier, standard). Gemini has an OpenAI-compatible endpoint, so `llm.py` routes any `gemini-*` model there with `GEMINI_API_KEY` (set by the owner). Token accounting counts any `total_tokens` beyond prompt + completion as output, so thinking tokens a provider leaves out of `completion_tokens` are never under-billed.
+
+**Reference grades (owner's decision, 2026-11-13):** Claude graded the answers blind (system names and judge verdicts hidden), instead of the owner. Agreement below is agreement with an independent model, not a human expert.
+- 60 natural answers: 30 from v3 dev runs (both systems), 30 from v2-set dev runs, sampled at random with fixed seeds.
+- 59 of 60 deserved to pass, so kappa can't be measured on natural answers alone. 20 perturbed answers were added, each written with one known error (wrong year, wrong company list, wrong figure, a "no change" claim, a confident answer to an unanswerable question), labelled before any judge saw them.
+- 80 answers, 119 key points, 21 of them false: [evals/v3/judge_calibration/](evals/v3/judge_calibration/).
+
+**`deepseek-v4-pro` vs reference:** key points 97% agreement, kappa 0.89 (95% CI 0.78–0.98); verdicts 96%, kappa 0.90 (0.79–1.00). It failed all 20 perturbed answers. Disagreements: one too-strict reading (C10: the answer says the topic "appears nowhere in the FY2023 10-K", judged as not covered), one literal one (C55), and one truncated verdict (C12).
+
+**Gemini:** waiting for the owner to add `GEMINI_API_KEY`. Then `edgar judge-calibrate --judge gemini-3.1-flash-lite` and `edgar rescore` on the stored test runs.
+
+### Phase 5b progress (2026-11-13)
+
+**Frozen version:** commit b2f2250 plus the Phase 5a switch (`EDGAR_SEARCH_TABLE`), which both dev runs had already used; no system change after dev. Test scored once.
+
+**Runs (off-peak, Fri 19:55 UTC):** 47 test questions × 3 runs × 2 systems, judge `deepseek-v4-pro`. Report: [evals/results/v3/v2_vs_v3_test.md](evals/results/v3/v2_vs_v3_test.md) (`edgar v3-report`).
+
+| | v2 baseline (5-year search) | v3 (plus claim tools) | v3 − v2 (paired bootstrap 95% CI) |
+|---|---|---|---|
+| Overall | 83.0% (runs 87.2, 80.8, 80.8) | 90.8% (93.6, 89.4, 89.4) | +7.8 pts (0.0 to +16.3), borderline |
+| multi_year (7) | 47.6% | 90.5% | +42.9 (+23.8 to +66.7), significant |
+| wording_change (6) | 55.6% | 72.2% | +16.7 (−11.1 to +55.6) |
+| first_appeared (10) / dropped (7) / shared_entity (4) / unanswerable (7) | 93.3 / 95.2 / 100 / 100% | same | 0 |
+| mixed_claim (6) | 88.9% | 83.3% | −5.6 (−16.7 to 0.0) |
+| Cost per question / judge | $0.0041 / $0.0024 | $0.0035 / $0.0019 | |
+| p50 / p95 seconds | 8.8 / 21.5 | 8.3 / 21.5 | |
+
+- **Attribution not settled:** v3 called a claim tool in 43% of multi_year answers and passed 10 of 12 where it didn't. The gain may come partly from the v3 prompt block or from the tools being listed at all. An ablation (v3 prompt without tools, tools without prompt) on dev would separate them; not run.
+- **Where v3 doesn't help:** first_appeared, dropped, shared_entity (the baseline is already at 93–100%), and mixed_claim (slightly worse, not significant). Per question: first-10, first-14, drop-02, mixed-09 and word-07 passed less often with v3.
+- **Run-to-run:** 19.1% (v2) and 17.0% (v3) of questions flipped at least once in 3 runs.
+- **Stats fix:** the overall CI's lower bound was 4.7e-18 and `Comparison.significant` (ci_low > 0) called it significant. The v3 report uses a 1e-9 margin. `stats.py` itself is unchanged because finished v2 reports use it; flagged, not rewritten.
+- **Second judge:** the Gemini section is added with `edgar rescore` on the stored test answers, then `edgar v3-report --judges gemini-3.1-flash-lite`, once the key is set.
+
+**Done-when status:** v2-vs-v3 table with CIs is in `evals/results/v3/` for one judge; the second judge's column is pending the key.
+
+### Phase 7 progress (2026-11-13)
+
+- **v3 gate:** `evals/baseline_v3.json`, 10 dev questions drawn at random with a fixed seed across all seven categories (first-03, first-06, drop-01, drop-08, shared-01, multi-11, word-01, mixed-06, una-01, una-11). 5 runs: 100, 100, 100, 100, 90% (mean 98.0%); tolerance 18.0% (spread 8.0% + one question 10.0%), so it fails at 2 or more misses. The baseline records the search table and toolset, and `edgar gate` refuses to score a run with other settings (older baselines mean the v2 defaults, so the v2 gate is unaffected).
+- **CI:** two steps added to the existing "Eval gate" job (so `main` already requires them): download and checksum the `ci-data-v2` add-on, then `edgar gate --baseline evals/baseline_v3.json` with the v3 switches. They run even if the v2 step fails.
+- **Snapshot:** `scripts/ci_data.sh pack-v3` builds `edgar-ci-data-v3.tar.gz` (44.6 MB: `chunks_multi` and `claims.sqlite`), checksum in `evals/ci-data-v2.sha256`. The v1 snapshot and its checksum are untouched. Checked by downloading `ci-data-v1`, extracting both into an empty folder and running the v3 gate on that data alone: passed 10/10, $0.038.
+- **Not done, needs the owner:** publishing the `ci-data-v2` release (the CI step fails until it exists). README sections are written; the Gemini rows are marked pending.
+
+**Spend so far:** $4.54 of $10 (list prices, from `edgar budget`; this session: dev runs and rescoring, judge calibration, test runs about $1.65, v3 baseline about $0.27, snapshot check $0.04).
